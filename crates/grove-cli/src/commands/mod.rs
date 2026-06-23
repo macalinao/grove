@@ -1,5 +1,7 @@
+pub mod ai;
 pub mod cd;
 pub mod doctor;
+pub mod editor;
 pub mod go;
 pub mod init;
 pub mod list;
@@ -38,6 +40,12 @@ pub enum Command {
     /// Run a command inside a worktree
     Run(#[bpaf(external(run::run))] run::Run),
 
+    /// Open a worktree in an editor
+    Editor(#[bpaf(external(editor::editor))] editor::Editor),
+
+    /// Launch an AI tool inside a worktree
+    Ai(#[bpaf(external(ai::ai))] ai::Ai),
+
     /// Run the worktree task graph from grove.kdl
     Tasks(#[bpaf(external(tasks::tasks))] tasks::Tasks),
 
@@ -64,6 +72,8 @@ pub fn execute(cmd: Command) -> Result<()> {
         Command::Go(args) => go::execute(&args),
         Command::Cd(args) => cd::execute(&args),
         Command::Run(args) => run::execute(args),
+        Command::Editor(args) => editor::execute(args),
+        Command::Ai(args) => ai::execute(args),
         Command::Tasks(args) => tasks::execute(&args),
         Command::Rm(args) => rm::execute(&args),
         Command::Mv(args) => mv::execute(&args),
