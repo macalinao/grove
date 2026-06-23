@@ -53,6 +53,10 @@ pub struct Config {
     pub ai_default: Option<String>,
     /// Color policy: `auto` | `always` | `never`.
     pub color: ColorChoice,
+    /// Glob patterns of files to copy from the source worktree (`grove copy`).
+    pub copy_include: Vec<String>,
+    /// Glob patterns of files to exclude from `grove copy`.
+    pub copy_exclude: Vec<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -81,6 +85,8 @@ impl Default for Config {
             editor_default: None,
             ai_default: None,
             color: ColorChoice::Auto,
+            copy_include: Vec::new(),
+            copy_exclude: Vec::new(),
         }
     }
 }
@@ -130,6 +136,14 @@ impl Config {
         }
         if let Some(v) = repo.config_get("grove.ui.color")? {
             self.color = ColorChoice::parse(&v);
+        }
+        let include = repo.config_get_all("grove.copy.include")?;
+        if !include.is_empty() {
+            self.copy_include = include;
+        }
+        let exclude = repo.config_get_all("grove.copy.exclude")?;
+        if !exclude.is_empty() {
+            self.copy_exclude = exclude;
         }
         Ok(())
     }

@@ -10,6 +10,10 @@ use std::path::{Path, PathBuf};
 pub use grove_config::{Config, ConfigError, TrustStatus, is_trusted, record_trust, trust_status};
 pub use grove_git::{GitError, Repo, Worktree};
 
+pub mod copy;
+
+pub use copy::copy_files;
+
 /// Errors from worktree lifecycle operations.
 #[derive(thiserror::Error, Debug)]
 pub enum CoreError {
@@ -29,6 +33,12 @@ pub enum CoreError {
     Io {
         path: PathBuf,
         source: std::io::Error,
+    },
+
+    #[error("invalid glob pattern '{pattern}': {source}")]
+    Glob {
+        pattern: String,
+        source: globset::Error,
     },
 }
 

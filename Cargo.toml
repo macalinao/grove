@@ -28,6 +28,7 @@ thiserror = "2"
 # binary completes itself; no `completion` subcommand needed).
 bpaf = { version = "0.9", features = ["derive", "autocomplete"] }
 console = "0.16"
+globset = "0.4"
 kdl = "6"
 sha2 = "0.10"
 
