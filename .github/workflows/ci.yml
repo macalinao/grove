@@ -37,6 +37,10 @@ jobs:
       - name: nix build
         run: nix build .#grove --print-build-logs
 
+      # Lint with the workspace clippy config (deny lints fail the build).
+      - name: cargo clippy
+        run: nix develop --command cargo clippy --workspace --all-targets
+
       # Full workspace test suite (every crate).
       - name: cargo test
         run: nix develop --command cargo test --workspace
