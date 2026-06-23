@@ -30,7 +30,9 @@ pub fn execute(args: Ai) -> Result<()> {
     let tool = args
         .tool
         .or_else(|| grove.config.ai_default.clone())
-        .ok_or_else(|| anyhow!("no AI tool configured; set grove.ai.default or pass --ai <NAME>"))?;
+        .ok_or_else(|| {
+            anyhow!("no AI tool configured; set grove.ai.default or pass --ai <NAME>")
+        })?;
 
     let mut command = ai_argv(&tool)?;
     command.extend(args.extra);

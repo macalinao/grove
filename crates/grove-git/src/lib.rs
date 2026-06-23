@@ -238,7 +238,9 @@ pub fn config_file_get(file: &Path, key: &str) -> Result<Option<String>> {
             source,
         })?;
     if output.status.success() {
-        Ok(Some(String::from_utf8_lossy(&output.stdout).trim().to_string()))
+        Ok(Some(
+            String::from_utf8_lossy(&output.stdout).trim().to_string(),
+        ))
     } else if output.status.code() == Some(1) {
         Ok(None)
     } else {
