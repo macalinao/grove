@@ -1,0 +1,5 @@
+# Pinned to the rustc the flake's nixpkgs ships (`pkgs.rustc`), so rustup
+# users and editors/CI outside `nix develop` match the Nix dev shell.
+[toolchain]
+channel = "1.95.0"
+components = ["rustfmt", "clippy", "rust-src", "rust-analyzer"]

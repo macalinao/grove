@@ -32,6 +32,7 @@ env-driven autocomplete (e.g. `COMPLETE=bash grove`), not a subcommand.
 ## Develop
 
 ```sh
+direnv allow         # optional: auto-load the dev shell on cd (nix-direnv)
 nix develop          # rust toolchain + treefmt + pre-commit
 cargo build
 cargo test
@@ -41,6 +42,8 @@ nix fmt              # treefmt (rustfmt + nixfmt)
 
 The Nix flake uses flake-parts, builds the package with crate2nix, and wires
 treefmt + git-hooks. CI runs `nix flake check` and `nix build`.
+`rust-toolchain.toml` pins the same rustc the flake ships, for rustup users and
+editors outside `nix develop`.
 
 ## License
 

@@ -5,6 +5,7 @@ pub mod mv;
 pub mod new;
 pub mod rm;
 pub mod run;
+pub mod version;
 
 use anyhow::Result;
 use bpaf::Bpaf;
@@ -39,6 +40,9 @@ pub enum Command {
 
     /// Diagnose the Grove environment
     Doctor(#[bpaf(external(doctor::doctor))] doctor::Doctor),
+
+    /// Show detailed version and build information
+    Version(#[bpaf(external(version::version))] version::Version),
 }
 
 pub fn execute(cmd: Command) -> Result<()> {
@@ -50,5 +54,6 @@ pub fn execute(cmd: Command) -> Result<()> {
         Command::Rm(args) => rm::execute(&args),
         Command::Mv(args) => mv::execute(&args),
         Command::Doctor(_) => doctor::execute(),
+        Command::Version(_) => version::execute(),
     }
 }
