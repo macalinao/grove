@@ -120,6 +120,9 @@ dependencies = [
 [[package]]
 name = "grove-shell"
 version = "0.1.0"
+dependencies = [
+ "thiserror",
+]
 
 [[package]]
 name = "grove-tasks"

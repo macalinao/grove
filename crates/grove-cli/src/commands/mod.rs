@@ -1,10 +1,13 @@
+pub mod cd;
 pub mod doctor;
 pub mod go;
+pub mod init;
 pub mod list;
 pub mod mv;
 pub mod new;
 pub mod rm;
 pub mod run;
+pub mod tasks;
 pub mod version;
 
 use anyhow::Result;
@@ -29,14 +32,23 @@ pub enum Command {
     /// Print the path to a worktree (for `cd "$(grove go x)"`)
     Go(#[bpaf(external(go::go))] go::Go),
 
+    /// Change directory to a worktree (requires shell integration)
+    Cd(#[bpaf(external(cd::cd))] cd::Cd),
+
     /// Run a command inside a worktree
     Run(#[bpaf(external(run::run))] run::Run),
+
+    /// Run the worktree task graph from grove.kdl
+    Tasks(#[bpaf(external(tasks::tasks))] tasks::Tasks),
 
     /// Remove worktree(s)
     Rm(#[bpaf(external(rm::rm))] rm::Rm),
 
     /// Rename a worktree and its branch
     Mv(#[bpaf(external(mv::mv))] mv::Mv),
+
+    /// Print shell integration (eval it from your shell rc)
+    Init(#[bpaf(external(init::init))] init::Init),
 
     /// Diagnose the Grove environment
     Doctor(#[bpaf(external(doctor::doctor))] doctor::Doctor),
@@ -50,9 +62,12 @@ pub fn execute(cmd: Command) -> Result<()> {
         Command::New(args) => new::execute(args),
         Command::List(args) => list::execute(args),
         Command::Go(args) => go::execute(&args),
+        Command::Cd(args) => cd::execute(&args),
         Command::Run(args) => run::execute(args),
+        Command::Tasks(args) => tasks::execute(&args),
         Command::Rm(args) => rm::execute(&args),
         Command::Mv(args) => mv::execute(&args),
+        Command::Init(args) => init::execute(&args),
         Command::Doctor(_) => doctor::execute(),
         Command::Version(_) => version::execute(),
     }

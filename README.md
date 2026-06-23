@@ -8,13 +8,42 @@ A Rust git worktree runner — a faster, typed, native alternative to
 
 ## Status
 
-**M1 in progress.** Working today: `new`, `list`, `go`, `run`, `rm`, `mv`,
-`doctor`. Forge integration (`clean --merged`, `pr`), editor/AI adapters,
-`copy`, the task graph, and per-branch databases are scaffolded and land in
-later milestones. See the design spec in the Obsidian vault (`igm/grove/…`).
+**M1 in progress.** Working today: `new`, `list`, `go`, `cd`, `run`, `tasks`,
+`rm`, `mv`, `init`, `doctor`, `version`. Forge integration (`clean --merged`,
+`pr`), editor/AI adapters, `copy`, and per-branch databases land in later
+milestones. See the design spec in the Obsidian vault (`igm/grove/…`).
 
 The CLI uses [`bpaf`](https://docs.rs/bpaf); shell completion is bpaf's
 env-driven autocomplete (e.g. `COMPLETE=bash grove`), not a subcommand.
+
+### Task graph
+
+`grove new` runs a parallel task DAG declared in `grove.kdl` (replacing gtr's
+serial `postCreate`). Independent tasks run concurrently; `needs` edges order
+them; cycles and unknown deps are rejected; a failure skips its dependents.
+
+```kdl
+tasks {
+    task "install" { run "bun install" }
+    task "codegen" { run "bun run codegen"; needs "install" }
+    task "build"   { run "cargo build";    needs "install" }
+    task "test"    { run "cargo test";     needs "codegen" "build" }
+}
+```
+
+`grove tasks` runs the graph in the current worktree (`--list`, `--concurrency
+N`, `--keep-going`); `grove new --no-tasks` skips it.
+
+### Shell integration (`grove cd`)
+
+A binary can't change its parent shell's directory, so `grove cd <name>` is a
+shell function emitted by `grove init`:
+
+```sh
+eval "$(grove init zsh)"      # bash/zsh
+grove init fish | source      # fish
+grove cd my-feature           # jumps into that worktree
+```
 
 ## Workspace layout
 

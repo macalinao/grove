@@ -109,7 +109,7 @@ pub struct ExecOpts {
 impl Default for ExecOpts {
     fn default() -> Self {
         let concurrency = std::thread::available_parallelism()
-            .map(std::num::NonZero::get)
+            .map(core::num::NonZero::get)
             .unwrap_or(1);
         ExecOpts {
             concurrency,
