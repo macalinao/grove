@@ -1,0 +1,42 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  nix:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: cachix/install-nix-action@v30
+        with:
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+            accept-flake-config = true
+
+      - uses: cachix/cachix-action@v15
+        with:
+          name: nix-community
+          # Read-only: the nix-community cache serves crate2nix/flake-parts deps.
+          skipPush: true
+
+      # Formatting + git-hooks + crate2nix build of the binary.
+      - name: nix flake check
+        run: nix flake check --print-build-logs
+
+      - name: nix build
+        run: nix build .#grove --print-build-logs
+
+      # Full workspace test suite (every crate).
+      - name: cargo test
+        run: nix develop --command cargo test --workspace

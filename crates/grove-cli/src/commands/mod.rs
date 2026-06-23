@@ -1,0 +1,54 @@
+pub mod doctor;
+pub mod go;
+pub mod list;
+pub mod mv;
+pub mod new;
+pub mod rm;
+pub mod run;
+
+use anyhow::Result;
+use bpaf::Bpaf;
+
+/// Tend your git worktrees.
+#[derive(Debug, Clone, Bpaf)]
+#[bpaf(options, version(env!("CARGO_PKG_VERSION")), fallback_to_usage)]
+pub struct Opts {
+    #[bpaf(external)]
+    pub command: Command,
+}
+
+#[derive(Debug, Clone, Bpaf)]
+pub enum Command {
+    /// Create a new worktree (and branch)
+    New(#[bpaf(external(new::new))] new::New),
+
+    /// List worktrees
+    List(#[bpaf(external(list::list))] list::List),
+
+    /// Print the path to a worktree (for `cd "$(grove go x)"`)
+    Go(#[bpaf(external(go::go))] go::Go),
+
+    /// Run a command inside a worktree
+    Run(#[bpaf(external(run::run))] run::Run),
+
+    /// Remove worktree(s)
+    Rm(#[bpaf(external(rm::rm))] rm::Rm),
+
+    /// Rename a worktree and its branch
+    Mv(#[bpaf(external(mv::mv))] mv::Mv),
+
+    /// Diagnose the Grove environment
+    Doctor(#[bpaf(external(doctor::doctor))] doctor::Doctor),
+}
+
+pub fn execute(cmd: Command) -> Result<()> {
+    match cmd {
+        Command::New(args) => new::execute(args),
+        Command::List(args) => list::execute(args),
+        Command::Go(args) => go::execute(&args),
+        Command::Run(args) => run::execute(args),
+        Command::Rm(args) => rm::execute(&args),
+        Command::Mv(args) => mv::execute(&args),
+        Command::Doctor(_) => doctor::execute(),
+    }
+}

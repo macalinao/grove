@@ -1,0 +1,17 @@
+[package]
+name = "grove-config"
+description = "Layered configuration for Grove (grove.kdl + git-config + .gtrconfig)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+rust-version.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+thiserror.workspace = true
+kdl.workspace = true
+grove-git.workspace = true

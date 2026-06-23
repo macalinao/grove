@@ -1,0 +1,45 @@
+[workspace]
+resolver = "2"
+members = ["crates/*"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/macalinao/grove"
+authors = ["Ian Macalinao <github@igm.pub>"]
+rust-version = "1.85"
+
+[workspace.dependencies]
+# Internal crates
+grove-core = { path = "crates/grove-core", version = "0.1.0" }
+grove-config = { path = "crates/grove-config", version = "0.1.0" }
+grove-git = { path = "crates/grove-git", version = "0.1.0" }
+grove-adapters = { path = "crates/grove-adapters", version = "0.1.0" }
+grove-forge = { path = "crates/grove-forge", version = "0.1.0" }
+grove-shell = { path = "crates/grove-shell", version = "0.1.0" }
+grove-db = { path = "crates/grove-db", version = "0.1.0" }
+
+# External
+anyhow = "1"
+thiserror = "2"
+# `autocomplete` enables bpaf's env-driven dynamic shell completion (the
+# binary completes itself; no `completion` subcommand needed).
+bpaf = { version = "0.9", features = ["derive", "autocomplete"] }
+console = "0.16"
+kdl = "6"
+
+[profile.release]
+lto = "thin"
+strip = true
+
+[workspace.lints.clippy]
+pedantic = { level = "warn", priority = -1 }
+complexity = { level = "deny", priority = -1 }
+must_use_candidate = "allow"
+unwrap_used = "deny"
+std_instead_of_alloc = "deny"
+std_instead_of_core = "deny"
+cognitive_complexity = "deny"
+too_many_lines = "deny"
+clone_on_ref_ptr = "deny"

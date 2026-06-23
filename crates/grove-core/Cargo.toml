@@ -1,0 +1,17 @@
+[package]
+name = "grove-core"
+description = "Core worktree lifecycle logic for Grove"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+rust-version.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+thiserror.workspace = true
+grove-git.workspace = true
+grove-config.workspace = true
