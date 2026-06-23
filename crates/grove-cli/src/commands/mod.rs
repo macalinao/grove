@@ -1,6 +1,7 @@
 pub mod ai;
 pub mod cd;
 pub mod config;
+pub mod copy;
 pub mod doctor;
 pub mod editor;
 pub mod go;
@@ -48,6 +49,9 @@ pub enum Command {
     /// Launch an AI tool inside a worktree
     Ai(#[bpaf(external(ai::ai))] ai::Ai),
 
+    /// Copy untracked config/env files into other worktree(s)
+    Copy(#[bpaf(external(copy::copy))] copy::Copy),
+
     /// Run the worktree task graph from grove.kdl
     Tasks(#[bpaf(external(tasks::tasks))] tasks::Tasks),
 
@@ -82,6 +86,7 @@ pub fn execute(cmd: Command) -> Result<()> {
         Command::Run(args) => run::execute(args),
         Command::Editor(args) => editor::execute(args),
         Command::Ai(args) => ai::execute(args),
+        Command::Copy(args) => copy::execute(args),
         Command::Tasks(args) => tasks::execute(&args),
         Command::Config(args) => config::execute(&args),
         Command::Trust(args) => trust::execute(&args),

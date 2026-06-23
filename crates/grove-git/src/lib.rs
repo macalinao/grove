@@ -209,6 +209,41 @@ impl Repo {
         }
     }
 
+    /// Read all values for a (possibly multi-valued) git config key.
+    ///
+    /// Returns an empty vector if the key is unset.
+    ///
+    /// # Errors
+    /// Returns [`GitError`] if `git config` cannot be spawned or fails for a
+    /// reason other than the key being absent.
+    pub fn config_get_all(&self, key: &str) -> Result<Vec<String>> {
+        let output = Command::new("git")
+            .current_dir(&self.cwd)
+            .args(["config", "--get-all", key])
+            .output()
+            .map_err(|source| GitError::Spawn {
+                cmd: format!("config --get-all {key}"),
+                source,
+            })?;
+
+        if output.status.success() {
+            Ok(String::from_utf8_lossy(&output.stdout)
+                .lines()
+                .map(str::trim)
+                .filter(|l| !l.is_empty())
+                .map(str::to_string)
+                .collect())
+        } else if output.status.code() == Some(1) {
+            // exit code 1 == key not present; anything else is a real error.
+            Ok(Vec::new())
+        } else {
+            Err(GitError::Command {
+                cmd: format!("config --get-all {key}"),
+                stderr: String::from_utf8_lossy(&output.stderr).trim().to_string(),
+            })
+        }
+    }
+
     /// Does a local branch named `branch` exist?
     pub fn branch_exists(&self, branch: &str) -> Result<bool> {
         let spec = format!("refs/heads/{branch}");

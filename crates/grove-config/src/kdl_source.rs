@@ -39,8 +39,34 @@ pub fn apply(cfg: &mut Config, src: &str) -> core::result::Result<(), String> {
             };
         }
     }
+    if let Some(children) = child_doc(&doc, "copy") {
+        let include = child_strings_all(children, "include");
+        if !include.is_empty() {
+            cfg.copy_include = include;
+        }
+        let exclude = child_strings_all(children, "exclude");
+        if !exclude.is_empty() {
+            cfg.copy_exclude = exclude;
+        }
+    }
 
     Ok(())
+}
+
+/// All positional string arguments across every node named `name` in `parent`.
+///
+/// Supports both multiple positional args on one node (`include "a" "b"`) and
+/// repeated nodes (`include "a"; include "b"`).
+fn child_strings_all(parent: &KdlDocument, name: &str) -> Vec<String> {
+    parent
+        .nodes()
+        .iter()
+        .filter(|n| n.name().value() == name)
+        .flat_map(KdlNode::entries)
+        .filter(|e| e.name().is_none())
+        .filter_map(|e| e.value().as_string())
+        .map(str::to_string)
+        .collect()
 }
 
 /// The child document of `parent`'s node named `name`, if it has a `{ ... }`.
@@ -78,5 +104,23 @@ mod tests {
         assert_eq!(cfg.editor_default.as_deref(), Some("cursor"));
         assert_eq!(cfg.ai_default.as_deref(), Some("claude"));
         assert_eq!(cfg.color, ColorChoice::Never);
+    }
+
+    #[test]
+    fn reads_copy_multiple_args_and_repeated_nodes() {
+        let src = r#"
+            copy {
+                include ".env" ".env.local"
+                include "config/*.toml"
+                exclude "*.secret"
+            }
+        "#;
+        let mut cfg = Config::default();
+        apply(&mut cfg, src).unwrap();
+        assert_eq!(
+            cfg.copy_include,
+            vec![".env", ".env.local", "config/*.toml"]
+        );
+        assert_eq!(cfg.copy_exclude, vec!["*.secret"]);
     }
 }
