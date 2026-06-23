@@ -219,6 +219,36 @@ fn run_git(dir: &Path, args: &[&str]) -> Result<String> {
     String::from_utf8(output.stdout).map_err(|_| GitError::NotUtf8)
 }
 
+/// Read a single value from an arbitrary git-config INI file (`git config -f`).
+///
+/// Returns `None` when the key is absent (git exit code 1). Works without a
+/// repository, so it can read `.gtrconfig` / `.groveconfig` directly.
+///
+/// # Errors
+///
+/// Returns an error if `git` cannot be spawned or fails for any reason other
+/// than the key being missing.
+pub fn config_file_get(file: &Path, key: &str) -> Result<Option<String>> {
+    let file = file.to_string_lossy().into_owned();
+    let output = Command::new("git")
+        .args(["config", "-f", &file, "--get", key])
+        .output()
+        .map_err(|source| GitError::Spawn {
+            cmd: format!("config -f {file} --get {key}"),
+            source,
+        })?;
+    if output.status.success() {
+        Ok(Some(String::from_utf8_lossy(&output.stdout).trim().to_string()))
+    } else if output.status.code() == Some(1) {
+        Ok(None)
+    } else {
+        Err(GitError::Command {
+            cmd: format!("config -f {file} --get {key}"),
+            stderr: String::from_utf8_lossy(&output.stderr).trim().to_string(),
+        })
+    }
+}
+
 /// Parse the output of `git worktree list --porcelain`.
 fn parse_worktrees(s: &str) -> Vec<Worktree> {
     let mut out = Vec::new();
