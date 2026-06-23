@@ -111,6 +111,87 @@ impl Repo {
         }
     }
 
+    /// Set a git config value (`git config [--global] <key> <value>`).
+    ///
+    /// # Errors
+    /// Returns an error if `git` cannot be spawned or the command fails.
+    pub fn config_set(&self, key: &str, value: &str, global: bool) -> Result<()> {
+        let mut args: Vec<&str> = vec!["config"];
+        if global {
+            args.push("--global");
+        }
+        args.extend_from_slice(&[key, value]);
+        self.git(&args)?;
+        Ok(())
+    }
+
+    /// Unset a git config value (`git config [--global] --unset <key>`).
+    ///
+    /// A missing key (git exit code 5) is treated as a successful no-op.
+    ///
+    /// # Errors
+    /// Returns an error if `git` cannot be spawned or the command fails for a
+    /// reason other than the key being absent.
+    pub fn config_unset(&self, key: &str, global: bool) -> Result<()> {
+        let mut args: Vec<&str> = vec!["config"];
+        if global {
+            args.push("--global");
+        }
+        args.extend_from_slice(&["--unset", key]);
+
+        let output = Command::new("git")
+            .current_dir(&self.cwd)
+            .args(&args)
+            .output()
+            .map_err(|source| GitError::Spawn {
+                cmd: args.join(" "),
+                source,
+            })?;
+
+        if output.status.success() || output.status.code() == Some(5) {
+            // exit code 5 == key not present; nothing to unset.
+            Ok(())
+        } else {
+            Err(GitError::Command {
+                cmd: args.join(" "),
+                stderr: String::from_utf8_lossy(&output.stderr).trim().to_string(),
+            })
+        }
+    }
+
+    /// List all `grove.*` config entries as `(key, value)` pairs.
+    ///
+    /// Runs `git config --get-regexp '^grove\.'`. Returns an empty vector when
+    /// no matching keys are set (git exit code 1).
+    ///
+    /// # Errors
+    /// Returns an error if `git` cannot be spawned or the command fails for a
+    /// reason other than there being no matches.
+    pub fn config_list_grove(&self) -> Result<Vec<(String, String)>> {
+        let args = ["config", "--get-regexp", r"^grove\."];
+        let output = Command::new("git")
+            .current_dir(&self.cwd)
+            .args(args)
+            .output()
+            .map_err(|source| GitError::Spawn {
+                cmd: args.join(" "),
+                source,
+            })?;
+
+        if output.status.success() {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            Ok(parse_config_pairs(&stdout))
+        } else if output.status.code() == Some(1) {
+            // exit code 1 == no matching keys.
+            Ok(Vec::new())
+        } else {
+            Err(GitError::Command {
+                cmd: args.join(" "),
+                stderr: String::from_utf8_lossy(&output.stderr).trim().to_string(),
+            })
+        }
+    }
+
     /// Does a local branch named `branch` exist?
     pub fn branch_exists(&self, branch: &str) -> Result<bool> {
         let spec = format!("refs/heads/{branch}");
@@ -297,6 +378,14 @@ fn set(cur: &mut Option<Worktree>, f: impl FnOnce(&mut Worktree)) {
     }
 }
 
+/// Parse `git config --get-regexp` output ("key value" per line) into pairs.
+fn parse_config_pairs(out: &str) -> Vec<(String, String)> {
+    out.lines()
+        .filter_map(|line| line.split_once(' '))
+        .map(|(k, v)| (k.to_string(), v.to_string()))
+        .collect()
+}
+
 #[cfg(test)]
 #[allow(clippy::unwrap_used)]
 mod tests {
@@ -333,5 +422,49 @@ detached
         let wts = parse_worktrees(sample);
         assert_eq!(wts.len(), 1);
         assert_eq!(wts[0].branch.as_deref(), Some("a"));
+    }
+
+    #[test]
+    fn parses_config_pairs_lines() {
+        let out = "grove.worktrees.dir ../wt\ngrove.editor.default cursor\n";
+        let pairs = parse_config_pairs(out);
+        assert_eq!(
+            pairs,
+            vec![
+                ("grove.worktrees.dir".to_string(), "../wt".to_string()),
+                ("grove.editor.default".to_string(), "cursor".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn config_set_get_list_unset_round_trip() {
+        let dir = std::env::temp_dir().join(format!("grove-cfg-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let run = |args: &[&str]| {
+            Command::new("git")
+                .current_dir(&dir)
+                .args(args)
+                .output()
+                .unwrap()
+        };
+        run(&["init"]);
+        let repo = Repo::discover_from(&dir).unwrap();
+
+        assert_eq!(repo.config_get("grove.test.key").unwrap(), None);
+        repo.config_set("grove.test.key", "hello", false).unwrap();
+        assert_eq!(
+            repo.config_get("grove.test.key").unwrap().as_deref(),
+            Some("hello")
+        );
+        let listed = repo.config_list_grove().unwrap();
+        assert!(listed.contains(&("grove.test.key".to_string(), "hello".to_string())));
+        repo.config_unset("grove.test.key", false).unwrap();
+        assert_eq!(repo.config_get("grove.test.key").unwrap(), None);
+        // Unsetting a missing key is a no-op.
+        repo.config_unset("grove.test.key", false).unwrap();
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

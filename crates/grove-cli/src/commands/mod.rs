@@ -1,5 +1,6 @@
 pub mod ai;
 pub mod cd;
+pub mod config;
 pub mod doctor;
 pub mod editor;
 pub mod go;
@@ -49,6 +50,9 @@ pub enum Command {
     /// Run the worktree task graph from grove.kdl
     Tasks(#[bpaf(external(tasks::tasks))] tasks::Tasks),
 
+    /// Get, set, list, or unset grove.* configuration
+    Config(#[bpaf(external(config::config))] config::Config),
+
     /// Remove worktree(s)
     Rm(#[bpaf(external(rm::rm))] rm::Rm),
 
@@ -75,6 +79,7 @@ pub fn execute(cmd: Command) -> Result<()> {
         Command::Editor(args) => editor::execute(args),
         Command::Ai(args) => ai::execute(args),
         Command::Tasks(args) => tasks::execute(&args),
+        Command::Config(args) => config::execute(&args),
         Command::Rm(args) => rm::execute(&args),
         Command::Mv(args) => mv::execute(&args),
         Command::Init(args) => init::execute(&args),
