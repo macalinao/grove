@@ -32,9 +32,14 @@ pub fn execute(args: &Tasks) -> Result<()> {
         return Ok(());
     }
     if args.list {
+        // Listing the graph is always safe — only RUNNING is gated.
         list_tasks(&specs);
         return Ok(());
     }
+
+    // Refuse to execute untrusted grove.kdl commands.
+    let git_dir = grove.repo.git_common_dir()?;
+    ensure_trusted(&dir, &git_dir)?;
 
     let opts = ExecOpts {
         concurrency: args
@@ -73,8 +78,28 @@ pub fn run_for(dir: &Path, opts: ExecOpts) -> Result<()> {
     if specs.is_empty() {
         return Ok(());
     }
+    // Refuse to execute untrusted grove.kdl commands.
+    let grove = Grove::open()?;
+    let git_dir = grove.repo.git_common_dir()?;
+    ensure_trusted(dir, &git_dir)?;
+
     let runner = ShellRunner::new(dir.to_path_buf());
     run_graph(specs, opts, &runner)
+}
+
+/// Refuse to run if `<dir>/grove.kdl` exists and is not trusted.
+///
+/// # Errors
+/// Returns an error instructing the user to run `grove trust` when the
+/// `grove.kdl` at `dir` has not been approved.
+fn ensure_trusted(dir: &Path, git_dir: &Path) -> Result<()> {
+    if grove_core::is_trusted(dir, git_dir) {
+        return Ok(());
+    }
+    Err(anyhow!(
+        "refusing to run untrusted grove.kdl tasks — review {} and run `grove trust` to approve",
+        dir.join("grove.kdl").display()
+    ))
 }
 
 fn list_tasks(specs: &[TaskSpec]) {

@@ -7,7 +7,9 @@
 
 use std::path::{Path, PathBuf};
 
-pub use grove_config::{Config, ConfigError};
+pub use grove_config::{
+    Config, ConfigError, TrustStatus, is_trusted, record_trust, trust_status,
+};
 pub use grove_git::{GitError, Repo, Worktree};
 
 /// Errors from worktree lifecycle operations.

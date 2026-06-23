@@ -11,6 +11,7 @@ pub mod new;
 pub mod rm;
 pub mod run;
 pub mod tasks;
+pub mod trust;
 pub mod version;
 
 use anyhow::Result;
@@ -53,6 +54,9 @@ pub enum Command {
     /// Get, set, list, or unset grove.* configuration
     Config(#[bpaf(external(config::config))] config::Config),
 
+    /// Approve this repo's grove.kdl so its tasks may run
+    Trust(#[bpaf(external(trust::trust))] trust::Trust),
+
     /// Remove worktree(s)
     Rm(#[bpaf(external(rm::rm))] rm::Rm),
 
@@ -80,6 +84,7 @@ pub fn execute(cmd: Command) -> Result<()> {
         Command::Ai(args) => ai::execute(args),
         Command::Tasks(args) => tasks::execute(&args),
         Command::Config(args) => config::execute(&args),
+        Command::Trust(args) => trust::execute(&args),
         Command::Rm(args) => rm::execute(&args),
         Command::Mv(args) => mv::execute(&args),
         Command::Init(args) => init::execute(&args),
