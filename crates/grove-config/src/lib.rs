@@ -13,6 +13,7 @@ use std::path::{Path, PathBuf};
 
 use grove_git::{GitError, Repo};
 
+mod gtr_compat;
 mod kdl_source;
 
 /// Errors from loading configuration.
@@ -60,7 +61,7 @@ pub enum ColorChoice {
 }
 
 impl ColorChoice {
-    fn parse(s: &str) -> ColorChoice {
+    pub(crate) fn parse(s: &str) -> ColorChoice {
         match s {
             "always" => ColorChoice::Always,
             "never" => ColorChoice::Never,
@@ -85,14 +86,17 @@ impl Config {
     /// Load and merge all configuration sources for `repo`.
     pub fn load(repo: &Repo) -> Result<Config> {
         let mut cfg = Config::default();
-
-        // Lowest precedence first: git config (covers global + local).
-        cfg.apply_git_config(repo)?;
-
-        // Highest precedence: a `grove.kdl` at the main worktree root.
         let root = repo
             .main_worktree()
             .unwrap_or_else(|_| repo.cwd().to_path_buf());
+
+        // Lowest precedence: gtr-compat files (.gtrconfig then .groveconfig).
+        gtr_compat::apply(&mut cfg, &root);
+
+        // Then git config grove.* (covers global + local).
+        cfg.apply_git_config(repo)?;
+
+        // Highest precedence: a `grove.kdl` at the main worktree root.
         let kdl_path = root.join("grove.kdl");
         if kdl_path.exists() {
             let src = std::fs::read_to_string(&kdl_path).map_err(|source| ConfigError::Read {
