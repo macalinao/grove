@@ -14,6 +14,7 @@ rust-version = "1.85"
 # Internal crates
 grove-core = { path = "crates/grove-core", version = "0.1.0" }
 grove-config = { path = "crates/grove-config", version = "0.1.0" }
+grove-tasks = { path = "crates/grove-tasks", version = "0.1.0" }
 grove-git = { path = "crates/grove-git", version = "0.1.0" }
 grove-adapters = { path = "crates/grove-adapters", version = "0.1.0" }
 grove-forge = { path = "crates/grove-forge", version = "0.1.0" }

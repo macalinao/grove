@@ -73,6 +73,9 @@ dependencies = [
  "bpaf",
  "console",
  "grove-core",
+ "grove-shell",
+ "grove-tasks",
+ "kdl",
 ]
 
 [[package]]
@@ -117,6 +120,14 @@ dependencies = [
 [[package]]
 name = "grove-shell"
 version = "0.1.0"
+
+[[package]]
+name = "grove-tasks"
+version = "0.1.0"
+dependencies = [
+ "kdl",
+ "thiserror",
+]
 
 [[package]]
 name = "kdl"
