@@ -70,6 +70,23 @@ impl Repo {
         run_git(&self.cwd, args)
     }
 
+    /// The git common directory (shared across worktrees), as an absolute path.
+    ///
+    /// This is where repo-wide state lives (the real `.git` for the main
+    /// worktree). Use it to store data that should be shared by every worktree.
+    ///
+    /// # Errors
+    /// Returns an error if `git rev-parse` fails or produces no output.
+    pub fn git_common_dir(&self) -> Result<PathBuf> {
+        let out = run_git(&self.cwd, &["rev-parse", "--git-common-dir"])?;
+        let raw = PathBuf::from(out.trim());
+        if raw.is_absolute() {
+            Ok(raw)
+        } else {
+            Ok(self.cwd.join(raw))
+        }
+    }
+
     /// The primary (first) worktree of the repository.
     pub fn main_worktree(&self) -> Result<PathBuf> {
         self.worktrees()?

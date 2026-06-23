@@ -15,6 +15,9 @@ use grove_git::{GitError, Repo};
 
 mod gtr_compat;
 mod kdl_source;
+pub mod trust;
+
+pub use trust::{TrustStatus, is_trusted, record_trust, trust_status};
 
 /// Errors from loading configuration.
 #[derive(thiserror::Error, Debug)]
