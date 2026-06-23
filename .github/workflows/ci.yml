@@ -24,7 +24,7 @@ jobs:
             experimental-features = nix-command flakes
             accept-flake-config = true
 
-      - uses: cachix/cachix-action@v15
+      - uses: cachix/cachix-action@v17
         with:
           name: nix-community
           # Read-only: the nix-community cache serves crate2nix/flake-parts deps.
