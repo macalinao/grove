@@ -160,7 +160,10 @@ impl Config {
             .main_worktree()
             .unwrap_or_else(|_| repo.cwd().to_path_buf());
 
-        // Lowest precedence: gtr-compat files (.gtrconfig then .groveconfig).
+        // Lowest precedence: `gtr.*` keys in git config (migration aid).
+        gtr_compat::apply_gtr_gitconfig(&mut cfg, repo);
+
+        // Then gtr-compat files (.gtrconfig then .groveconfig).
         gtr_compat::apply(&mut cfg, &root);
 
         // Then git config grove.* (covers global + local).

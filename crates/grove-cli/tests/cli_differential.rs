@@ -148,6 +148,38 @@ fn copy_directory_with_exclude_matches() {
 }
 
 #[test]
+fn gtrconfig_file_drives_copy_identically() {
+    let gtr = gtr_or_skip!();
+    let p = Pair::new(gtr);
+    // The SAME real .gtrconfig (gtr's on-disk schema) feeds both tools.
+    let cfg = "[copy]\n\tinclude = .env*\n\tincludeDirs = vendor\n";
+    for r in [&p.grove, &p.gtr_repo] {
+        r.write(".gtrconfig", cfg);
+        r.write(".env.local", "X=1");
+        r.write("vendor/lib.rs", "x");
+    }
+    p.g(&["new", "feature", "--no-fetch"]);
+    p.t(&["new", "feature", "--no-fetch", "--yes"]);
+    assert_eq!(
+        p.grove.files_in("feature"),
+        p.gtr_repo.files_in("feature"),
+        "files copied from a shared .gtrconfig differ (grove vs gtr)"
+    );
+    assert!(
+        p.grove
+            .files_in("feature")
+            .iter()
+            .any(|f| f == ".env.local")
+    );
+    assert!(
+        p.grove
+            .files_in("feature")
+            .iter()
+            .any(|f| f.contains("vendor/"))
+    );
+}
+
+#[test]
 fn prefix_and_name_suffix_match() {
     let gtr = gtr_or_skip!();
     let p = Pair::new(gtr);
