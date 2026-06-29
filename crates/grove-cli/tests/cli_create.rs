@@ -28,24 +28,21 @@ fn sanitizes_slashes_into_folder_name() {
 }
 
 #[test]
-fn sanitizes_hash_and_special_chars() {
+fn sanitizes_hash_and_special_chars_like_gtr() {
     let r = TestRepo::new();
-    // These are valid git branch names; only the folder is sanitized.
+    // gtr maps '#' (a problematic char) to '-' in the folder name.
     ok(&r.grove(&["new", "bug#42", "--no-fetch"]));
     assert!(
-        r.wt("bug42").is_dir(),
-        "'#' should be dropped from the folder"
+        r.wt("bug-42").is_dir(),
+        "'#' should become '-' in the folder"
     );
 
+    // gtr keeps '@' and '+' (they aren't in its problematic set).
     ok(&r.grove(&["new", "feat+a@b", "--no-fetch"]));
-    assert!(
-        r.wt("feat-a-b").is_dir(),
-        "'+' and '@' should become '-' in the folder"
-    );
-    // The branch keeps its original name.
+    assert!(r.wt("feat+a@b").is_dir(), "'+'/'@' are kept, matching gtr");
     assert_eq!(
         ok(&r.grove(&["go", "feat+a@b"])).trim(),
-        r.wt("feat-a-b").to_string_lossy()
+        r.wt("feat+a@b").to_string_lossy()
     );
 }
 

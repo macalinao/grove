@@ -337,18 +337,18 @@ impl Grove {
 
 /// Make a branch name safe to use as a directory component.
 ///
-/// Slashes and other characters that aren't alphanumeric or `-_.` become
-/// hyphens; `#` is dropped (it would start a shebang/comment in some contexts).
+/// Mirrors gtr's `sanitize_branch_name` exactly: the "problematic" characters
+/// `/ \ <space> : * ? " < > | #` become `-`, and leading/trailing hyphens are
+/// trimmed. Everything else (including `@`, `+`, `.`, `_`) is kept as-is, so a
+/// folder name matches what gtr would produce for the same branch.
 #[must_use]
 pub fn sanitize(branch: &str) -> String {
-    branch
+    const PROBLEM: &[char] = &['/', '\\', ' ', ':', '*', '?', '"', '<', '>', '|', '#'];
+    let replaced: String = branch
         .chars()
-        .filter_map(|c| match c {
-            '#' => None,
-            c if c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.') => Some(c),
-            _ => Some('-'),
-        })
-        .collect()
+        .map(|c| if PROBLEM.contains(&c) { '-' } else { c })
+        .collect();
+    replaced.trim_matches('-').to_string()
 }
 
 #[cfg(test)]
@@ -363,9 +363,12 @@ mod tests {
     }
 
     #[test]
-    fn sanitizes_special_chars_and_drops_hash() {
+    fn sanitizes_like_gtr() {
+        // Problematic chars -> '-'; '@' and '+' are kept; ends trimmed.
         assert_eq!(sanitize("feature/JIRA-123_v1.2"), "feature-JIRA-123_v1.2");
-        assert_eq!(sanitize("fix#42"), "fix42");
+        assert_eq!(sanitize("fix#42"), "fix-42");
         assert_eq!(sanitize("a b:c"), "a-b-c");
+        assert_eq!(sanitize("feat+a@b"), "feat+a@b");
+        assert_eq!(sanitize("/lead/trail/"), "lead-trail");
     }
 }

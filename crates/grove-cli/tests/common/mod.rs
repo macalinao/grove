@@ -90,6 +90,69 @@ impl TestRepo {
             .unwrap()
     }
 
+    /// Run an arbitrary `program <args>` in the repo root (isolated config,
+    /// fake-bin dir on PATH). Used to drive the upstream `gtr` binary.
+    pub fn tool(&self, program: &str, args: &[&str]) -> Output {
+        let mut cmd = self.base_cmd(program, &self.root);
+        let path = std::env::var("PATH").unwrap_or_default();
+        cmd.env("PATH", format!("{}:{path}", self.bin.display()));
+        cmd.args(args).output().unwrap()
+    }
+
+    /// Give the repo a local bare `origin` with `main` pushed, so worktree tools
+    /// can resolve `origin/main` as a default base without any network.
+    pub fn add_origin(&self) {
+        let remote = self.workspace.join("origin.git");
+        Command::new("git")
+            .args(["init", "-q", "--bare"])
+            .arg(&remote)
+            .env("GIT_CONFIG_GLOBAL", &self.global_cfg)
+            .env("GIT_CONFIG_SYSTEM", "/dev/null")
+            .status()
+            .unwrap();
+        self.git(&["remote", "add", "origin", &remote.to_string_lossy()]);
+        self.git(&["push", "-q", "origin", "main"]);
+        self.git(&["fetch", "-q", "origin"]);
+        self.git(&["remote", "set-head", "origin", "main"]);
+    }
+
+    /// Sorted folder names directly under the `<repo>-worktrees` base dir.
+    pub fn worktree_folders(&self) -> Vec<String> {
+        let base = self.workspace.join("repo-worktrees");
+        let mut out: Vec<String> = std::fs::read_dir(&base)
+            .map(|rd| {
+                rd.flatten()
+                    .filter(|e| e.path().is_dir())
+                    .filter_map(|e| e.file_name().into_string().ok())
+                    .collect()
+            })
+            .unwrap_or_default();
+        out.sort();
+        out
+    }
+
+    /// Sorted local branch names.
+    pub fn local_branches(&self) -> Vec<String> {
+        let out = self.git(&["branch", "--format=%(refname:short)"]);
+        let mut v: Vec<String> = String::from_utf8_lossy(&out.stdout)
+            .lines()
+            .map(str::trim)
+            .filter(|l| !l.is_empty())
+            .map(str::to_string)
+            .collect();
+        v.sort();
+        v
+    }
+
+    /// Sorted relative file paths inside a worktree folder (excluding `.git`).
+    pub fn files_in(&self, folder: &str) -> Vec<String> {
+        let base = self.workspace.join("repo-worktrees").join(folder);
+        let mut out = Vec::new();
+        collect_files(&base, &base, &mut out);
+        out.sort();
+        out
+    }
+
     /// Set a local git config key in the repo.
     pub fn set_config(&self, key: &str, value: &str) {
         self.git(&["config", key, value]);
@@ -173,4 +236,22 @@ pub fn stdout(out: &Output) -> String {
 
 pub fn stderr(out: &Output) -> String {
     String::from_utf8_lossy(&out.stderr).into_owned()
+}
+
+/// Recursively collect file paths under `dir`, relative to `base`, skipping `.git`.
+fn collect_files(base: &Path, dir: &Path, out: &mut Vec<String>) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.file_name().is_some_and(|n| n == ".git") {
+            continue;
+        }
+        if path.is_dir() {
+            collect_files(base, &path, out);
+        } else if let Ok(rel) = path.strip_prefix(base) {
+            out.push(rel.to_string_lossy().into_owned());
+        }
+    }
 }

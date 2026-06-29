@@ -18,14 +18,15 @@ pub fn execute(args: List) -> Result<()> {
     if args.porcelain {
         for w in grove.list()? {
             let branch = w.branch.as_deref().unwrap_or("");
-            let status = if w.bare {
-                "bare"
+            // Match gtr's status precedence: locked > prunable > detached > ok.
+            let status = if w.locked {
+                "locked"
+            } else if w.prunable {
+                "prunable"
             } else if w.detached {
                 "detached"
-            } else if w.locked {
-                "locked"
             } else {
-                ""
+                "ok"
             };
             println!("{}\t{branch}\t{status}", w.path.display());
         }

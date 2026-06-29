@@ -26,6 +26,8 @@ pub struct Worktree {
     pub bare: bool,
     pub detached: bool,
     pub locked: bool,
+    /// The worktree's directory is missing; git would prune it.
+    pub prunable: bool,
 }
 
 impl Worktree {
@@ -573,6 +575,7 @@ fn parse_worktrees(s: &str) -> Vec<Worktree> {
                     bare: false,
                     detached: false,
                     locked: false,
+                    prunable: false,
                 });
             }
             "HEAD" => set(&mut cur, |w| w.head = val.map(str::to_string)),
@@ -582,6 +585,7 @@ fn parse_worktrees(s: &str) -> Vec<Worktree> {
             "bare" => set(&mut cur, |w| w.bare = true),
             "detached" => set(&mut cur, |w| w.detached = true),
             "locked" => set(&mut cur, |w| w.locked = true),
+            "prunable" => set(&mut cur, |w| w.prunable = true),
             _ => {}
         }
     }
