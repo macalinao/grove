@@ -10,6 +10,7 @@ use std::path::{Path, PathBuf};
 pub use grove_config::{
     Config, ConfigError, TrackMode, TrustStatus, is_trusted, record_trust, trust_status,
 };
+pub use grove_forge::{CliForge, Forge, ForgeError, PrInfo, PrState, Provider};
 pub use grove_git::{ConfigScope, GitError, Repo, Worktree};
 
 pub mod copy;
@@ -143,6 +144,19 @@ impl Grove {
     fn folder_named(&self, name: &str) -> PathBuf {
         let folder = format!("{}{}", self.config.worktrees_prefix, name);
         self.worktrees_dir().join(folder)
+    }
+
+    /// Build a forge client for the configured remote, detecting the provider
+    /// from its URL (overridable via `grove.provider`).
+    ///
+    /// Returns `None` when the remote has no URL or its host isn't a known
+    /// provider and none is configured.
+    pub fn forge(&self) -> Result<Option<CliForge>> {
+        let url = self.repo.remote_url(self.config.remote())?;
+        let provider = url
+            .as_deref()
+            .and_then(|u| grove_forge::detect(u, self.config.provider.as_deref()));
+        Ok(provider.map(|p| CliForge::new(p, &self.root)))
     }
 
     /// Build the copy specification from config plus a `.worktreeinclude` file

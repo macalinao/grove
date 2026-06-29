@@ -16,3 +16,4 @@ thiserror.workspace = true
 globset.workspace = true
 grove-git.workspace = true
 grove-config.workspace = true
+grove-forge.workspace = true

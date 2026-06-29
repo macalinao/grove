@@ -1,6 +1,7 @@
 pub mod adapter;
 pub mod ai;
 pub mod cd;
+pub mod clean;
 pub mod completion;
 pub mod config;
 pub mod copy;
@@ -67,6 +68,9 @@ pub enum Command {
     /// Remove worktree(s)
     Rm(#[bpaf(external(rm::rm))] rm::Rm),
 
+    /// Remove worktrees whose PRs are merged or closed
+    Clean(#[bpaf(external(clean::clean))] clean::Clean),
+
     /// Rename a worktree and its branch
     Mv(#[bpaf(external(mv::mv))] mv::Mv),
 
@@ -103,6 +107,7 @@ pub fn execute(cmd: Command) -> Result<()> {
         Command::Config(args) => config::execute(&args),
         Command::Trust(args) => trust::execute(&args),
         Command::Rm(args) => rm::execute(&args),
+        Command::Clean(args) => clean::execute(&args),
         Command::Mv(args) => mv::execute(&args),
         Command::PostCd(args) => post_cd::execute(&args),
         Command::Init(args) => init::execute(&args),

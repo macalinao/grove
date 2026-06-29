@@ -175,6 +175,7 @@ version = "0.1.0"
 dependencies = [
  "globset",
  "grove-config",
+ "grove-forge",
  "grove-git",
  "thiserror",
 ]

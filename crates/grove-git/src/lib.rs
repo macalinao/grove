@@ -345,6 +345,32 @@ impl Repo {
         }
     }
 
+    /// The configured URL of `remote` (`git remote get-url <remote>`), if any.
+    pub fn remote_url(&self, remote: &str) -> Result<Option<String>> {
+        let output = Command::new("git")
+            .current_dir(&self.cwd)
+            .args(["remote", "get-url", remote])
+            .output()
+            .map_err(|source| GitError::Spawn {
+                cmd: format!("remote get-url {remote}"),
+                source,
+            })?;
+        if output.status.success() {
+            Ok(Some(
+                String::from_utf8_lossy(&output.stdout).trim().to_string(),
+            ))
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// Prune worktree registry entries whose directories are gone
+    /// (`git worktree prune`).
+    pub fn worktree_prune(&self) -> Result<()> {
+        self.git(&["worktree", "prune"])?;
+        Ok(())
+    }
+
     /// Fetch `remote` (`git fetch <remote>`).
     ///
     /// # Errors
