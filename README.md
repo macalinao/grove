@@ -8,10 +8,16 @@ A Rust git worktree runner — a faster, typed, native alternative to
 
 ## Status
 
-**M1 in progress.** Working today: `new`, `list`, `go`, `cd`, `run`, `tasks`,
-`rm`, `mv`, `init`, `doctor`, `version`. Forge integration (`clean --merged`,
-`pr`), editor/AI adapters, `copy`, and per-branch databases land in later
-milestones. See the design spec in the Obsidian vault (`igm/grove/…`).
+**M1 complete; M2 (forge) landed via `gh`/`glab`.** Working today: `new`
+(with `--from`/`--from-current`/`--remote`/`--track`/`--name`/`--no-fetch`/
+`--no-copy`/`--no-hooks`/`-e`/`-a`), `list`, `go`, `cd` (with an fzf picker),
+`run`, `tasks`, `rm`, `mv`, `copy`, `clean --merged/--closed`, `config`
+(get/set/add/unset/list, `--local`/`--global`/`--system`), `trust`, `editor`,
+`ai`, `adapter`, `completion`, `init`, `doctor`, `version`. Lifecycle hooks
+(`postCreate`/`preRemove`/`postRemove`/`postCd`) and a copy-on-write copy engine
+(files, directories, `.worktreeinclude`) are wired in. Per-branch databases
+(`grove-db`) remain a later milestone. See the design spec in the Obsidian vault
+(`igm/grove/…`).
 
 The CLI uses [`bpaf`](https://docs.rs/bpaf); shell completion is bpaf's
 env-driven autocomplete (e.g. `COMPLETE=bash grove`), not a subcommand.

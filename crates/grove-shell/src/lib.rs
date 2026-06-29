@@ -62,7 +62,18 @@ const POSIX: &str = r#"grove() {
   if [ "$1" = "cd" ]; then
     shift
     local _grove_dir
-    _grove_dir="$(command grove go "$@")" || return $?
+    if [ "$#" -eq 0 ]; then
+      if ! command -v fzf >/dev/null 2>&1; then
+        echo "grove cd: pass a worktree name, or install fzf for an interactive picker" >&2
+        return 1
+      fi
+      _grove_dir="$(command grove list --porcelain \
+        | fzf --delimiter='\t' --with-nth=2,3 --nth=1 --prompt='worktree> ' \
+        | cut -f1)"
+      [ -z "$_grove_dir" ] && return 0
+    else
+      _grove_dir="$(command grove go "$@")" || return $?
+    fi
     if [ -n "$_grove_dir" ]; then
       builtin cd "$_grove_dir" || return $?
       eval "$(command grove post-cd "$_grove_dir" 2>/dev/null)"
@@ -75,7 +86,19 @@ const POSIX: &str = r#"grove() {
 
 const FISH: &str = r#"function grove
     if test "$argv[1]" = cd
-        set -l _grove_dir (command grove go $argv[2..-1]); or return $status
+        set -l _grove_dir
+        if test (count $argv) -eq 1
+            if not command -v fzf >/dev/null 2>&1
+                echo "grove cd: pass a worktree name, or install fzf for an interactive picker" >&2
+                return 1
+            end
+            set _grove_dir (command grove list --porcelain \
+                | fzf --delimiter=\t --with-nth=2,3 --nth=1 --prompt='worktree> ' \
+                | cut -f1)
+            test -z "$_grove_dir"; and return 0
+        else
+            set _grove_dir (command grove go $argv[2..-1]); or return $status
+        end
         if test -n "$_grove_dir"
             builtin cd $_grove_dir; or return $status
             command grove post-cd $_grove_dir 2>/dev/null | source
@@ -116,5 +139,15 @@ mod tests {
         assert!(s.contains("function grove"));
         assert!(s.contains("command grove go"));
         assert!(s.contains("builtin cd"));
+    }
+
+    #[test]
+    fn scripts_wire_fzf_picker_and_post_cd() {
+        for shell in [Shell::Bash, Shell::Zsh, Shell::Fish] {
+            let s = init_script(shell);
+            assert!(s.contains("fzf"), "{} picker", shell.as_str());
+            assert!(s.contains("grove list --porcelain"), "{}", shell.as_str());
+            assert!(s.contains("grove post-cd"), "{} postCd", shell.as_str());
+        }
     }
 }

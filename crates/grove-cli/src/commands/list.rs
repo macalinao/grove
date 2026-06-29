@@ -7,7 +7,7 @@ use grove_core::Grove;
 #[derive(Debug, Clone, Bpaf)]
 #[bpaf(command, fallback_to_usage)]
 pub struct List {
-    /// Machine-readable output (git's porcelain format)
+    /// Machine-readable output: `path⇥branch⇥status`, one worktree per line
     #[bpaf(long, switch)]
     porcelain: bool,
 }
@@ -16,7 +16,19 @@ pub fn execute(args: List) -> Result<()> {
     let grove = Grove::open()?;
 
     if args.porcelain {
-        print!("{}", grove.repo.git(&["worktree", "list", "--porcelain"])?);
+        for w in grove.list()? {
+            let branch = w.branch.as_deref().unwrap_or("");
+            let status = if w.bare {
+                "bare"
+            } else if w.detached {
+                "detached"
+            } else if w.locked {
+                "locked"
+            } else {
+                ""
+            };
+            println!("{}\t{branch}\t{status}", w.path.display());
+        }
         return Ok(());
     }
 
