@@ -36,7 +36,17 @@ fn init_emits_function_picker_and_post_cd() {
         assert!(out.contains("grove"), "{shell}: missing function");
         assert!(out.contains("fzf"), "{shell}: missing fzf picker");
         assert!(out.contains("post-cd"), "{shell}: missing postCd");
+        assert!(out.contains("--cd"), "{shell}: missing new --cd handling");
     }
+}
+
+#[test]
+fn init_as_uses_custom_function_name() {
+    let r = TestRepo::new();
+    let bash = ok(&r.grove(&["init", "bash", "--as", "gw"]));
+    assert!(bash.contains("gw() {"), "bash: {bash}");
+    let fish = ok(&r.grove(&["init", "fish", "--as", "gw"]));
+    assert!(fish.contains("function gw"), "fish: {fish}");
 }
 
 #[test]

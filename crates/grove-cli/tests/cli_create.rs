@@ -76,6 +76,15 @@ fn print_path_emits_only_the_path_on_stdout() {
 }
 
 #[test]
+fn cd_flag_prints_path_for_shell_wrapper() {
+    let r = TestRepo::new();
+    // `--cd` prints the path on stdout so the shell function can cd into it.
+    let out = r.grove(&["new", "feature", "--no-fetch", "--cd"]);
+    ok(&out);
+    assert_eq!(stdout(&out).trim(), r.wt("feature").to_string_lossy());
+}
+
+#[test]
 fn copies_configured_files_on_create() {
     let r = TestRepo::new();
     r.write(".env", "SECRET=1");

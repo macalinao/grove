@@ -53,6 +53,9 @@ pub struct New {
     /// Print the new worktree path on stdout (for shell integration)
     #[bpaf(long, switch)]
     print_path: bool,
+    /// Create and cd into the worktree (requires shell integration; prints path)
+    #[bpaf(long, switch)]
+    cd: bool,
     /// Branch name (also the worktree folder name, slashes sanitized)
     #[bpaf(positional("BRANCH"))]
     branch: String,
@@ -78,7 +81,8 @@ pub fn execute(args: New) -> Result<()> {
         },
     )?;
 
-    if args.print_path {
+    // `--cd` prints the path (on stdout) so the shell wrapper can cd into it.
+    if args.print_path || args.cd {
         println!("{}", path.display());
     } else {
         eprintln!(
