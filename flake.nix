@@ -61,6 +61,11 @@
           packages.default = self'.packages.grove;
           packages.grove = cargoNix.workspaceMembers.grove-cli.build;
 
+          # The upstream gtr CLI, pinned, for the grove-vs-gtr differential
+          # tests. Exposed as a package and put on the dev shell PATH so
+          # `cargo test` can run those tests reproducibly via the flake.
+          packages.git-worktree-runner = pkgs.callPackage ./nix/packages/git-worktree-runner.nix { };
+
           # `nix flake check` builds the binary (fmt + git-hooks checks are
           # contributed by the treefmt-nix / git-hooks flake modules). The
           # workspace test suite runs as a dedicated CI step via `cargo test`
@@ -84,6 +89,8 @@
             packages = rustTools ++ [
               pkgs.git
               config.treefmt.build.wrapper
+              # gtr on PATH enables the differential tests (skipped otherwise).
+              self'.packages.git-worktree-runner
             ];
             shellHook = ''
               ${config.pre-commit.installationScript}
