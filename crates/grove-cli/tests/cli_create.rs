@@ -57,6 +57,22 @@ fn folder_override_and_name_suffix() {
 }
 
 #[test]
+fn force_allows_same_branch_in_a_second_worktree() {
+    let r = TestRepo::new();
+    ok(&r.grove(&["new", "feat", "--no-fetch"]));
+    // Same branch again is refused without --force…
+    assert!(
+        !r.grove(&["new", "feat", "--no-fetch", "--name", "two"])
+            .status
+            .success()
+    );
+    // …and allowed with --force (+ a distinct folder via --name).
+    ok(&r.grove(&["new", "feat", "--no-fetch", "--force", "--name", "two"]));
+    assert!(r.wt("feat").is_dir());
+    assert!(r.wt("feat-two").is_dir());
+}
+
+#[test]
 fn refuses_when_destination_exists() {
     let r = TestRepo::new();
     ok(&r.grove(&["new", "dup", "--no-fetch"]));
