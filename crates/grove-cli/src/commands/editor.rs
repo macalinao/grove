@@ -24,6 +24,6 @@ pub fn execute(args: Editor) -> Result<()> {
     let grove = Grove::open()?;
     let path = grove.path_for(&args.name)?;
     let editor = launch::editor_name(&grove, args.editor.as_deref())?;
-    let status = launch::open_editor(&grove, &editor, &path)?;
-    std::process::exit(status.code().unwrap_or(1));
+    let code = launch::open_editor(&grove, &editor, &path)?;
+    std::process::exit(code);
 }

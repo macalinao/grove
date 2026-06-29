@@ -13,6 +13,10 @@ use grove_core::Grove;
 
 /// Editors that understand `*.code-workspace` files.
 const WORKSPACE_EDITORS: &[&str] = &["vscode", "code", "cursor", "antigravity", "windsurf"];
+/// Terminal editors that fork; launch in the background and don't wait.
+const BACKGROUND_EDITORS: &[&str] = &["emacs"];
+/// Editors launched as `cd <worktree> && <cmd> .` (gtr's `dot` feature).
+const DOT_EDITORS: &[&str] = &["antigravity"];
 
 /// Resolve the editor adapter name (`--editor` override, else config).
 pub fn editor_name(grove: &Grove, override_name: Option<&str>) -> Result<String> {
@@ -32,39 +36,62 @@ pub fn ai_name(grove: &Grove, override_name: Option<&str>) -> Result<String> {
         .ok_or_else(|| anyhow!("no AI tool configured; set grove.ai.default or pass --ai <NAME>"))
 }
 
-/// Launch the named editor against `path`, waiting for it to exit.
+/// Launch the named editor against `path`. Returns the exit code to propagate.
 ///
-/// For VS Code-style editors a workspace file is passed instead of the folder
-/// when one is configured (`grove.editor.workspace`) or auto-detected.
-pub fn open_editor(grove: &Grove, name: &str, path: &Path) -> Result<std::process::ExitStatus> {
-    let mut command = editor_command_argv(grove, name)?;
-    command.push(editor_target(grove, name, path));
-    let (program, rest) = command
+/// Honors gtr's adapter features: a `*.code-workspace` file is opened for
+/// VS Code-style editors when present; `dot` editors run `cd <path> && cmd .`;
+/// `background` editors are spawned without waiting. `none` is a no-op.
+pub fn open_editor(grove: &Grove, name: &str, path: &Path) -> Result<i32> {
+    if name == "none" {
+        return Ok(0);
+    }
+    let argv = editor_command_argv(grove, name)?;
+    let (program, fixed) = argv
         .split_first()
         .ok_or_else(|| anyhow!("editor adapter '{name}' has an empty command"))?;
-    Command::new(program)
-        .args(rest)
+
+    let mut cmd = Command::new(program);
+    cmd.args(fixed);
+    let workspace = WORKSPACE_EDITORS
+        .contains(&name)
+        .then(|| workspace_file(grove, path))
+        .flatten();
+    if let Some(ws) = workspace {
+        cmd.arg(ws);
+    } else if DOT_EDITORS.contains(&name) {
+        cmd.current_dir(path).arg(".");
+    } else {
+        cmd.arg(path);
+    }
+
+    if BACKGROUND_EDITORS.contains(&name) {
+        cmd.spawn()
+            .map_err(|e| anyhow!("failed to launch `{program}`: {e}"))?;
+        return Ok(0);
+    }
+    let status = cmd
         .status()
-        .map_err(|e| anyhow!("failed to launch `{program}`: {e}"))
+        .map_err(|e| anyhow!("failed to launch `{program}`: {e}"))?;
+    Ok(status.code().unwrap_or(1))
 }
 
-/// Launch the named AI tool with cwd set to `path`, waiting for it to exit.
-pub fn launch_ai(
-    grove: &Grove,
-    name: &str,
-    path: &Path,
-    extra: &[String],
-) -> Result<std::process::ExitStatus> {
+/// Launch the named AI tool with cwd set to `path`. Returns the exit code.
+/// `none` is a no-op.
+pub fn launch_ai(grove: &Grove, name: &str, path: &Path, extra: &[String]) -> Result<i32> {
+    if name == "none" {
+        return Ok(0);
+    }
     let mut command = ai_command_argv(grove, name)?;
     command.extend_from_slice(extra);
     let (program, rest) = command
         .split_first()
         .ok_or_else(|| anyhow!("ai adapter '{name}' has an empty command"))?;
-    Command::new(program)
+    let status = Command::new(program)
         .args(rest)
         .current_dir(path)
         .status()
-        .map_err(|e| anyhow!("failed to launch `{program}`: {e}"))
+        .map_err(|e| anyhow!("failed to launch `{program}`: {e}"))?;
+    Ok(status.code().unwrap_or(1))
 }
 
 /// Resolve an editor adapter to argv: a built-in, else a custom
@@ -93,17 +120,6 @@ fn custom_argv(grove: &Grove, kind: &str, name: &str) -> Result<Option<Vec<Strin
         let argv: Vec<String> = cmd.split_whitespace().map(str::to_string).collect();
         (!argv.is_empty()).then_some(argv)
     }))
-}
-
-/// The trailing argument an editor opens: a workspace file when applicable,
-/// otherwise the worktree directory.
-fn editor_target(grove: &Grove, name: &str, path: &Path) -> String {
-    if WORKSPACE_EDITORS.contains(&name) {
-        if let Some(ws) = workspace_file(grove, path) {
-            return ws.to_string_lossy().into_owned();
-        }
-    }
-    path.to_string_lossy().into_owned()
 }
 
 /// Resolve a `*.code-workspace` file for `path`, honoring `grove.editor.workspace`

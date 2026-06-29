@@ -99,3 +99,30 @@ fn unknown_editor_adapter_errors() {
     ok(&r.grove(&["new", "feature", "--no-fetch", "--no-copy"]));
     failed(&r.grove(&["editor", "feature", "--editor", "does-not-exist"]));
 }
+
+#[test]
+fn editor_and_ai_none_are_noops() {
+    let r = TestRepo::new();
+    ok(&r.grove(&["new", "feature", "--no-fetch", "--no-copy"]));
+    // gtr's `none` adapter: don't launch anything, succeed.
+    ok(&r.grove(&["editor", "feature", "--editor", "none"]));
+    ok(&r.grove(&["ai", "feature", "--ai", "none"]));
+}
+
+#[test]
+fn adapter_lists_gtr_built_ins() {
+    let r = TestRepo::new();
+    let out = ok(&r.grove(&["adapter"]));
+    // A representative slice of gtr's registry (with gtr's program names).
+    for name in [
+        "antigravity",
+        "emacs",
+        "sublime",
+        "webstorm",
+        "auggie",
+        "copilot",
+        "continue",
+    ] {
+        assert!(out.contains(name), "adapter list missing {name}: {out}");
+    }
+}

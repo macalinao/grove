@@ -26,6 +26,6 @@ pub fn execute(args: Ai) -> Result<()> {
     let grove = Grove::open()?;
     let path = grove.path_for(&args.name)?;
     let tool = launch::ai_name(&grove, args.tool.as_deref())?;
-    let status = launch::launch_ai(&grove, &tool, &path, &args.extra)?;
-    std::process::exit(status.code().unwrap_or(1));
+    let code = launch::launch_ai(&grove, &tool, &path, &args.extra)?;
+    std::process::exit(code);
 }
