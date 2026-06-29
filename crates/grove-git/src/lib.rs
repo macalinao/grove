@@ -246,16 +246,80 @@ impl Repo {
 
     /// Does a local branch named `branch` exist?
     pub fn branch_exists(&self, branch: &str) -> Result<bool> {
-        let spec = format!("refs/heads/{branch}");
+        self.ref_exists(&format!("refs/heads/{branch}"))
+    }
+
+    /// Does the remote-tracking branch `<remote>/<branch>` exist?
+    pub fn remote_branch_exists(&self, remote: &str, branch: &str) -> Result<bool> {
+        self.ref_exists(&format!("refs/remotes/{remote}/{branch}"))
+    }
+
+    /// Does `spec` resolve to an existing ref (quietly)?
+    fn ref_exists(&self, spec: &str) -> Result<bool> {
         let output = Command::new("git")
             .current_dir(&self.cwd)
-            .args(["rev-parse", "--verify", "--quiet", &spec])
+            .args(["rev-parse", "--verify", "--quiet", spec])
             .output()
             .map_err(|source| GitError::Spawn {
                 cmd: format!("rev-parse --verify {spec}"),
                 source,
             })?;
         Ok(output.status.success())
+    }
+
+    /// The short name of the currently checked-out branch, if not detached.
+    pub fn current_branch(&self) -> Result<Option<String>> {
+        let output = Command::new("git")
+            .current_dir(&self.cwd)
+            .args(["symbolic-ref", "--quiet", "--short", "HEAD"])
+            .output()
+            .map_err(|source| GitError::Spawn {
+                cmd: "symbolic-ref --short HEAD".to_string(),
+                source,
+            })?;
+        if output.status.success() {
+            Ok(Some(
+                String::from_utf8_lossy(&output.stdout).trim().to_string(),
+            ))
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// The default branch of `remote` (its HEAD), e.g. `main`, if known.
+    pub fn remote_head_branch(&self, remote: &str) -> Result<Option<String>> {
+        let spec = format!("refs/remotes/{remote}/HEAD");
+        let output = Command::new("git")
+            .current_dir(&self.cwd)
+            .args(["symbolic-ref", "--quiet", &spec])
+            .output()
+            .map_err(|source| GitError::Spawn {
+                cmd: format!("symbolic-ref {spec}"),
+                source,
+            })?;
+        if output.status.success() {
+            let full = String::from_utf8_lossy(&output.stdout);
+            let prefix = format!("refs/remotes/{remote}/");
+            Ok(full.trim().strip_prefix(&prefix).map(str::to_string))
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// Fetch `remote` (`git fetch <remote>`).
+    ///
+    /// # Errors
+    /// Returns [`GitError`] if `git` cannot be spawned or the fetch fails
+    /// (e.g. the network is unavailable).
+    pub fn fetch(&self, remote: &str) -> Result<()> {
+        self.git(&["fetch", remote])?;
+        Ok(())
+    }
+
+    /// Set the upstream of local `branch` to `upstream` (`<remote>/<name>`).
+    pub fn set_upstream(&self, branch: &str, upstream: &str) -> Result<()> {
+        self.git(&["branch", &format!("--set-upstream-to={upstream}"), branch])?;
+        Ok(())
     }
 
     /// Create a worktree at `path`.
@@ -379,6 +443,42 @@ pub fn config_file_get(file: &Path, key: &str) -> Result<Option<String>> {
     } else {
         Err(GitError::Command {
             cmd: format!("config -f {file} --get {key}"),
+            stderr: String::from_utf8_lossy(&output.stderr).trim().to_string(),
+        })
+    }
+}
+
+/// Read all values for a (possibly multi-valued) key from an arbitrary
+/// git-config INI file (`git config -f <file> --get-all <key>`).
+///
+/// Returns an empty vector when the key is absent (git exit code 1). Works
+/// without a repository, so it can read `.gtrconfig` / `.groveconfig` directly.
+///
+/// # Errors
+///
+/// Returns an error if `git` cannot be spawned or fails for any reason other
+/// than the key being missing.
+pub fn config_file_get_all(file: &Path, key: &str) -> Result<Vec<String>> {
+    let file = file.to_string_lossy().into_owned();
+    let output = Command::new("git")
+        .args(["config", "-f", &file, "--get-all", key])
+        .output()
+        .map_err(|source| GitError::Spawn {
+            cmd: format!("config -f {file} --get-all {key}"),
+            source,
+        })?;
+    if output.status.success() {
+        Ok(String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .map(str::trim)
+            .filter(|l| !l.is_empty())
+            .map(str::to_string)
+            .collect())
+    } else if output.status.code() == Some(1) {
+        Ok(Vec::new())
+    } else {
+        Err(GitError::Command {
+            cmd: format!("config -f {file} --get-all {key}"),
             stderr: String::from_utf8_lossy(&output.stderr).trim().to_string(),
         })
     }

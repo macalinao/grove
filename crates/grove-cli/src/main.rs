@@ -9,6 +9,8 @@
 use anyhow::Result;
 
 mod commands;
+mod hooks;
+mod launch;
 
 fn main() -> Result<()> {
     let opts = commands::opts().run();

@@ -8,10 +8,80 @@
 
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::process::Command;
 
 use globset::{Glob, GlobSet, GlobSetBuilder};
 
 use crate::{CoreError, Result};
+
+/// What to copy from a source worktree into a target one.
+#[derive(Debug, Default, Clone)]
+pub struct CopySpec {
+    /// Glob patterns of individual files to copy.
+    pub include: Vec<String>,
+    /// Glob patterns of files to skip.
+    pub exclude: Vec<String>,
+    /// Whole directories to copy (copy-on-write where supported).
+    pub include_dirs: Vec<String>,
+    /// Glob patterns of subpaths to prune from copied directories.
+    pub exclude_dirs: Vec<String>,
+}
+
+impl CopySpec {
+    /// Is there nothing to copy?
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.include.is_empty() && self.include_dirs.is_empty()
+    }
+}
+
+/// Copy everything described by `spec` from `from` into `to`.
+///
+/// Files matching the include globs are copied first, then each include
+/// directory is cloned wholesale (copy-on-write where the filesystem allows),
+/// pruning any subpath matching an `exclude_dirs` glob. Returns every relative
+/// path that was copied (or, when `dry_run`, that *would* be copied).
+///
+/// # Errors
+/// Returns [`CoreError::Glob`] on an invalid pattern or [`CoreError::Io`] for a
+/// filesystem error.
+pub fn copy_into(from: &Path, to: &Path, spec: &CopySpec, dry_run: bool) -> Result<Vec<PathBuf>> {
+    let mut copied = copy_files(from, to, &spec.include, &spec.exclude, dry_run)?;
+    copied.extend(copy_dirs(
+        from,
+        to,
+        &spec.include_dirs,
+        &spec.exclude_dirs,
+        dry_run,
+    )?);
+    copied.sort();
+    copied.dedup();
+    Ok(copied)
+}
+
+/// Read include globs from a `.worktreeinclude` file at `root` (gitignore-style:
+/// one pattern per line, `#` comments and blank lines ignored).
+///
+/// Returns an empty vector when the file is absent.
+///
+/// # Errors
+/// Returns [`CoreError::Io`] if the file exists but cannot be read.
+pub fn read_worktreeinclude(root: &Path) -> Result<Vec<String>> {
+    let path = root.join(".worktreeinclude");
+    if !path.exists() {
+        return Ok(Vec::new());
+    }
+    let text = fs::read_to_string(&path).map_err(|source| CoreError::Io {
+        path: path.clone(),
+        source,
+    })?;
+    Ok(text
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty() && !l.starts_with('#'))
+        .map(str::to_string)
+        .collect())
+}
 
 /// Copy files matching `include` (and not `exclude`) from `from` into `to`.
 ///
@@ -45,6 +115,158 @@ pub fn copy_files(
         }
     }
     Ok(matches)
+}
+
+/// Copy each directory in `dirs` from `from` into `to`, pruning subpaths that
+/// match an `exclude_dirs` glob. Uses copy-on-write when the platform supports
+/// it, falling back to a plain recursive copy.
+///
+/// Returns the relative directory paths that were copied (or would be, when
+/// `dry_run`). A directory missing in `from` is silently skipped.
+///
+/// # Errors
+/// Returns [`CoreError::Glob`] on an invalid exclude pattern or
+/// [`CoreError::Io`] for a filesystem error.
+pub fn copy_dirs(
+    from: &Path,
+    to: &Path,
+    dirs: &[String],
+    exclude_dirs: &[String],
+    dry_run: bool,
+) -> Result<Vec<PathBuf>> {
+    if dirs.is_empty() {
+        return Ok(Vec::new());
+    }
+    let exclude_set = build_globset(exclude_dirs)?;
+    let mut copied = Vec::new();
+    for dir in dirs {
+        let rel = PathBuf::from(dir);
+        let src = from.join(&rel);
+        if !src.is_dir() {
+            continue;
+        }
+        copied.push(rel.clone());
+        if dry_run {
+            continue;
+        }
+        let dst = to.join(&rel);
+        if let Some(parent) = dst.parent() {
+            fs::create_dir_all(parent).map_err(|source| CoreError::Io {
+                path: parent.to_path_buf(),
+                source,
+            })?;
+        }
+        cow_copy_dir(&src, &dst)?;
+        prune_excludes(to, &rel, &exclude_set)?;
+    }
+    Ok(copied)
+}
+
+/// Copy `src` directory to `dst` using a copy-on-write clone where available.
+///
+/// On macOS this uses `cp -cR` (APFS clone); on Linux `cp -a --reflink=auto`
+/// (btrfs/xfs reflink, plain copy otherwise). If `cp` is unavailable or fails,
+/// falls back to a recursive in-process copy.
+fn cow_copy_dir(src: &Path, dst: &Path) -> Result<()> {
+    let args: &[&str] = if cfg!(target_os = "macos") {
+        &["-cR"]
+    } else {
+        &["-a", "--reflink=auto"]
+    };
+    let ran = Command::new("cp")
+        .args(args)
+        .arg(src)
+        .arg(dst)
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false);
+    if ran {
+        return Ok(());
+    }
+    recursive_copy(src, dst)
+}
+
+/// Plain recursive directory copy (fallback when CoW `cp` is unavailable).
+fn recursive_copy(src: &Path, dst: &Path) -> Result<()> {
+    fs::create_dir_all(dst).map_err(|source| CoreError::Io {
+        path: dst.to_path_buf(),
+        source,
+    })?;
+    let entries = fs::read_dir(src).map_err(|source| CoreError::Io {
+        path: src.to_path_buf(),
+        source,
+    })?;
+    for entry in entries {
+        let entry = entry.map_err(|source| CoreError::Io {
+            path: src.to_path_buf(),
+            source,
+        })?;
+        let file_type = entry.file_type().map_err(|source| CoreError::Io {
+            path: entry.path(),
+            source,
+        })?;
+        let child_src = entry.path();
+        let child_dst = dst.join(entry.file_name());
+        if file_type.is_dir() {
+            recursive_copy(&child_src, &child_dst)?;
+        } else {
+            fs::copy(&child_src, &child_dst).map_err(|source| CoreError::Io {
+                path: child_dst,
+                source,
+            })?;
+        }
+    }
+    Ok(())
+}
+
+/// Remove any path under `<to>/<rel>` whose path relative to `to` matches an
+/// `exclude` glob. Walks top-down and deletes the matched subtree.
+fn prune_excludes(to: &Path, rel: &Path, exclude: &GlobSet) -> Result<()> {
+    if exclude.is_empty() {
+        return Ok(());
+    }
+    let mut to_remove = Vec::new();
+    collect_excluded(to, &to.join(rel), exclude, &mut to_remove)?;
+    // Deepest paths first so a parent removal never invalidates a child path.
+    to_remove.sort_by_key(|p| core::cmp::Reverse(p.components().count()));
+    for path in to_remove {
+        if path.is_dir() {
+            let _ = fs::remove_dir_all(&path);
+        } else {
+            let _ = fs::remove_file(&path);
+        }
+    }
+    Ok(())
+}
+
+/// Gather absolute paths under `dir` that match an exclude glob (relative to `to`).
+fn collect_excluded(
+    to: &Path,
+    dir: &Path,
+    exclude: &GlobSet,
+    out: &mut Vec<PathBuf>,
+) -> Result<()> {
+    let entries = match fs::read_dir(dir) {
+        Ok(e) => e,
+        Err(_) => return Ok(()),
+    };
+    for entry in entries {
+        let entry = entry.map_err(|source| CoreError::Io {
+            path: dir.to_path_buf(),
+            source,
+        })?;
+        let path = entry.path();
+        if let Ok(rel) = path.strip_prefix(to) {
+            if exclude.is_match(rel) {
+                out.push(path.clone());
+                continue;
+            }
+        }
+        if path.is_dir() {
+            collect_excluded(to, &path, exclude, out)?;
+        }
+    }
+    Ok(())
 }
 
 /// Build a [`GlobSet`] from `patterns` (empty patterns yield an empty set).
@@ -219,6 +441,46 @@ mod tests {
 
         assert_eq!(copied, vec![PathBuf::from(".env")]);
         assert!(!to.path.join(".env").exists());
+    }
+
+    #[test]
+    fn copies_dirs_and_prunes_excluded_subpaths() {
+        let from = TmpDir::new("dirfrom");
+        let to = TmpDir::new("dirto");
+        from.write("node_modules/pkg/index.js", "x");
+        from.write("node_modules/.cache/blob", "junk");
+        from.write("vendor/keep", "v");
+
+        let copied = copy_dirs(
+            &from.path,
+            &to.path,
+            &s(&["node_modules", "vendor"]),
+            &s(&["node_modules/.cache"]),
+            false,
+        )
+        .unwrap();
+
+        assert!(copied.contains(&PathBuf::from("node_modules")));
+        assert!(copied.contains(&PathBuf::from("vendor")));
+        assert!(to.path.join("node_modules/pkg/index.js").exists());
+        assert!(to.path.join("vendor/keep").exists());
+        assert!(!to.path.join("node_modules/.cache").exists());
+    }
+
+    #[test]
+    fn missing_dir_is_skipped() {
+        let from = TmpDir::new("dirfrom2");
+        let to = TmpDir::new("dirto2");
+        let copied = copy_dirs(&from.path, &to.path, &s(&["nope"]), &[], false).unwrap();
+        assert!(copied.is_empty());
+    }
+
+    #[test]
+    fn reads_worktreeinclude_ignoring_comments() {
+        let root = TmpDir::new("wti");
+        root.write(".worktreeinclude", "# comment\n.env\n\n*.local\n");
+        let pats = read_worktreeinclude(&root.path).unwrap();
+        assert_eq!(pats, vec![".env".to_string(), "*.local".to_string()]);
     }
 
     #[test]

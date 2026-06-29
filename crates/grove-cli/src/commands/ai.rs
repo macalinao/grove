@@ -1,9 +1,8 @@
-use std::process::Command;
-
-use anyhow::{Result, anyhow};
+use anyhow::Result;
 use bpaf::Bpaf;
-use grove_adapters::ai_argv;
 use grove_core::Grove;
+
+use crate::launch;
 
 /// Launch an AI tool inside a worktree.
 ///
@@ -26,26 +25,7 @@ pub struct Ai {
 pub fn execute(args: Ai) -> Result<()> {
     let grove = Grove::open()?;
     let path = grove.path_for(&args.name)?;
-
-    let tool = args
-        .tool
-        .or_else(|| grove.config.ai_default.clone())
-        .ok_or_else(|| {
-            anyhow!("no AI tool configured; set grove.ai.default or pass --ai <NAME>")
-        })?;
-
-    let mut command = ai_argv(&tool)?;
-    command.extend(args.extra);
-
-    let (program, rest) = command
-        .split_first()
-        .ok_or_else(|| anyhow!("ai adapter '{tool}' has an empty command"))?;
-
-    let status = Command::new(program)
-        .args(rest)
-        .current_dir(&path)
-        .status()
-        .map_err(|e| anyhow!("failed to launch `{program}`: {e}"))?;
-
+    let tool = launch::ai_name(&grove, args.tool.as_deref())?;
+    let status = launch::launch_ai(&tool, &path, &args.extra)?;
     std::process::exit(status.code().unwrap_or(1));
 }

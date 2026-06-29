@@ -57,6 +57,56 @@ pub struct Config {
     pub copy_include: Vec<String>,
     /// Glob patterns of files to exclude from `grove copy`.
     pub copy_exclude: Vec<String>,
+    /// Directories to copy wholesale (e.g. `node_modules`), copy-on-write
+    /// where the filesystem supports it.
+    pub copy_include_dirs: Vec<String>,
+    /// Glob patterns of subdirectories to skip while copying `copy_include_dirs`.
+    pub copy_exclude_dirs: Vec<String>,
+    /// Commands run in a new worktree after creation (alongside the task graph).
+    pub hook_post_create: Vec<String>,
+    /// Commands run in a worktree before it is removed.
+    pub hook_pre_remove: Vec<String>,
+    /// Commands run (in the main repo) after a worktree is removed.
+    pub hook_post_remove: Vec<String>,
+    /// Commands sourced in the current shell after `grove cd` / `grove new --cd`.
+    pub hook_post_cd: Vec<String>,
+    /// Default remote for base refs and tracking (default: `origin`).
+    pub default_remote: Option<String>,
+    /// Default base branch (default: the remote's HEAD).
+    pub default_branch: Option<String>,
+    /// Upstream tracking mode for new branches.
+    pub track: TrackMode,
+    /// Workspace file passed to VS Code-style editors (or `none` to disable).
+    pub editor_workspace: Option<String>,
+    /// Forge provider override (`github` | `gitlab` | `gitea`); auto-detected otherwise.
+    pub provider: Option<String>,
+}
+
+/// Upstream tracking mode for branches created by `grove new`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum TrackMode {
+    /// Track a remote branch when one exists, otherwise don't (default).
+    #[default]
+    Auto,
+    /// Always set an upstream on the configured remote.
+    Remote,
+    /// Branch locally without setting any upstream.
+    Local,
+    /// Never set an upstream.
+    None,
+}
+
+impl TrackMode {
+    /// Parse a tracking mode, falling back to [`TrackMode::Auto`].
+    #[must_use]
+    pub fn parse(s: &str) -> TrackMode {
+        match s {
+            "remote" => TrackMode::Remote,
+            "local" => TrackMode::Local,
+            "none" => TrackMode::None,
+            _ => TrackMode::Auto,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -87,6 +137,17 @@ impl Default for Config {
             color: ColorChoice::Auto,
             copy_include: Vec::new(),
             copy_exclude: Vec::new(),
+            copy_include_dirs: Vec::new(),
+            copy_exclude_dirs: Vec::new(),
+            hook_post_create: Vec::new(),
+            hook_pre_remove: Vec::new(),
+            hook_post_remove: Vec::new(),
+            hook_post_cd: Vec::new(),
+            default_remote: None,
+            default_branch: None,
+            track: TrackMode::Auto,
+            editor_workspace: None,
+            provider: None,
         }
     }
 }
@@ -122,6 +183,14 @@ impl Config {
     }
 
     fn apply_git_config(&mut self, repo: &Repo) -> Result<()> {
+        self.apply_git_scalars(repo)?;
+        self.apply_git_copy(repo)?;
+        self.apply_git_hooks(repo)?;
+        Ok(())
+    }
+
+    /// Single-valued `grove.*` git-config keys.
+    fn apply_git_scalars(&mut self, repo: &Repo) -> Result<()> {
         if let Some(v) = repo.config_get("grove.worktrees.dir")? {
             self.worktrees_dir = Some(v);
         }
@@ -131,21 +200,76 @@ impl Config {
         if let Some(v) = repo.config_get("grove.editor.default")? {
             self.editor_default = Some(v);
         }
+        if let Some(v) = repo.config_get("grove.editor.workspace")? {
+            self.editor_workspace = Some(v);
+        }
         if let Some(v) = repo.config_get("grove.ai.default")? {
             self.ai_default = Some(v);
         }
         if let Some(v) = repo.config_get("grove.ui.color")? {
             self.color = ColorChoice::parse(&v);
         }
-        let include = repo.config_get_all("grove.copy.include")?;
-        if !include.is_empty() {
-            self.copy_include = include;
+        if let Some(v) = repo.config_get("grove.defaultRemote")? {
+            self.default_remote = Some(v);
         }
-        let exclude = repo.config_get_all("grove.copy.exclude")?;
-        if !exclude.is_empty() {
-            self.copy_exclude = exclude;
+        if let Some(v) = repo.config_get("grove.defaultBranch")? {
+            self.default_branch = Some(v);
+        }
+        if let Some(v) = repo.config_get("grove.track")? {
+            self.track = TrackMode::parse(&v);
+        }
+        if let Some(v) = repo.config_get("grove.provider")? {
+            self.provider = Some(v);
         }
         Ok(())
+    }
+
+    /// Multi-valued `grove.copy.*` git-config keys.
+    fn apply_git_copy(&mut self, repo: &Repo) -> Result<()> {
+        set_if_present(
+            &mut self.copy_include,
+            repo.config_get_all("grove.copy.include")?,
+        );
+        set_if_present(
+            &mut self.copy_exclude,
+            repo.config_get_all("grove.copy.exclude")?,
+        );
+        set_if_present(
+            &mut self.copy_include_dirs,
+            repo.config_get_all("grove.copy.includeDirs")?,
+        );
+        set_if_present(
+            &mut self.copy_exclude_dirs,
+            repo.config_get_all("grove.copy.excludeDirs")?,
+        );
+        Ok(())
+    }
+
+    /// Multi-valued `grove.hooks.*` git-config keys.
+    fn apply_git_hooks(&mut self, repo: &Repo) -> Result<()> {
+        set_if_present(
+            &mut self.hook_post_create,
+            repo.config_get_all("grove.hooks.postCreate")?,
+        );
+        set_if_present(
+            &mut self.hook_pre_remove,
+            repo.config_get_all("grove.hooks.preRemove")?,
+        );
+        set_if_present(
+            &mut self.hook_post_remove,
+            repo.config_get_all("grove.hooks.postRemove")?,
+        );
+        set_if_present(
+            &mut self.hook_post_cd,
+            repo.config_get_all("grove.hooks.postCd")?,
+        );
+        Ok(())
+    }
+
+    /// The configured default remote, or `origin`.
+    #[must_use]
+    pub fn remote(&self) -> &str {
+        self.default_remote.as_deref().unwrap_or("origin")
     }
 
     /// Resolve the worktree base directory against the repository `root`.
@@ -162,6 +286,14 @@ impl Config {
             }
             None => default_worktrees_dir(root),
         }
+    }
+}
+
+/// Overwrite `slot` with `values` only when the latter is non-empty, so a
+/// lower-precedence source isn't clobbered by an unset multi-valued key.
+fn set_if_present(slot: &mut Vec<String>, values: Vec<String>) {
+    if !values.is_empty() {
+        *slot = values;
     }
 }
 

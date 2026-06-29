@@ -7,7 +7,7 @@
 
 use std::path::Path;
 
-use crate::{ColorChoice, Config};
+use crate::{ColorChoice, Config, TrackMode};
 
 /// Apply `.gtrconfig` then `.groveconfig` (lowest precedence) onto `cfg`.
 pub fn apply(cfg: &mut Config, root: &Path) {
@@ -34,6 +34,54 @@ fn apply_file(cfg: &mut Config, path: &Path, prefix: &str) {
     if let Some(v) = get(path, prefix, "ui.color") {
         cfg.color = ColorChoice::parse(&v);
     }
+    if let Some(v) = get(path, prefix, "defaults.remote") {
+        cfg.default_remote = Some(v);
+    }
+    if let Some(v) = get(path, prefix, "defaults.branch") {
+        cfg.default_branch = Some(v);
+    }
+    if let Some(v) = get(path, prefix, "defaults.track") {
+        cfg.track = TrackMode::parse(&v);
+    }
+    if let Some(v) = get(path, prefix, "defaults.provider") {
+        cfg.provider = Some(v);
+    }
+    if let Some(v) = get(path, prefix, "editor.workspace") {
+        cfg.editor_workspace = Some(v);
+    }
+
+    let include = get_all(path, prefix, "copy.include");
+    if !include.is_empty() {
+        cfg.copy_include = include;
+    }
+    let exclude = get_all(path, prefix, "copy.exclude");
+    if !exclude.is_empty() {
+        cfg.copy_exclude = exclude;
+    }
+    let include_dirs = get_all(path, prefix, "copy.includeDirs");
+    if !include_dirs.is_empty() {
+        cfg.copy_include_dirs = include_dirs;
+    }
+    let exclude_dirs = get_all(path, prefix, "copy.excludeDirs");
+    if !exclude_dirs.is_empty() {
+        cfg.copy_exclude_dirs = exclude_dirs;
+    }
+    let post_create = get_all(path, prefix, "hooks.postCreate");
+    if !post_create.is_empty() {
+        cfg.hook_post_create = post_create;
+    }
+    let pre_remove = get_all(path, prefix, "hooks.preRemove");
+    if !pre_remove.is_empty() {
+        cfg.hook_pre_remove = pre_remove;
+    }
+    let post_remove = get_all(path, prefix, "hooks.postRemove");
+    if !post_remove.is_empty() {
+        cfg.hook_post_remove = post_remove;
+    }
+    let post_cd = get_all(path, prefix, "hooks.postCd");
+    if !post_cd.is_empty() {
+        cfg.hook_post_cd = post_cd;
+    }
 }
 
 /// Read `<prefix>.<key>` from the INI `path`, ignoring errors.
@@ -41,6 +89,11 @@ fn get(path: &Path, prefix: &str, key: &str) -> Option<String> {
     grove_git::config_file_get(path, &format!("{prefix}.{key}"))
         .ok()
         .flatten()
+}
+
+/// Read all values of a (possibly multi-valued) `<prefix>.<key>`, ignoring errors.
+fn get_all(path: &Path, prefix: &str, key: &str) -> Vec<String> {
+    grove_git::config_file_get_all(path, &format!("{prefix}.{key}")).unwrap_or_default()
 }
 
 #[cfg(test)]

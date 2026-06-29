@@ -7,12 +7,14 @@
 
 use std::path::{Path, PathBuf};
 
-pub use grove_config::{Config, ConfigError, TrustStatus, is_trusted, record_trust, trust_status};
+pub use grove_config::{
+    Config, ConfigError, TrackMode, TrustStatus, is_trusted, record_trust, trust_status,
+};
 pub use grove_git::{GitError, Repo, Worktree};
 
 pub mod copy;
 
-pub use copy::copy_files;
+pub use copy::{CopySpec, copy_dirs, copy_files, copy_into, read_worktreeinclude};
 
 /// Errors from worktree lifecycle operations.
 #[derive(thiserror::Error, Debug)]
@@ -53,16 +55,42 @@ pub struct Grove {
 }
 
 /// Options for [`Grove::create`].
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct CreateOpts {
     /// Branch to create/check out. Defaults to the worktree `name`.
     pub branch: Option<String>,
     /// Start point when creating a new branch (`--from`).
     pub base: Option<String>,
+    /// Base the new branch on the current HEAD (`--from-current`).
+    pub from_current: bool,
     /// Override the folder name (`--folder`). Defaults to the sanitized branch.
     pub folder: Option<String>,
+    /// Folder-name suffix appended to the sanitized branch (`--name`).
+    pub name: Option<String>,
     /// Allow checking out a branch already used by another worktree.
     pub force: bool,
+    /// Fetch the remote before creating (so base refs are current).
+    pub fetch: bool,
+    /// Override the remote used for base refs and tracking (`--remote`).
+    pub remote: Option<String>,
+    /// Upstream tracking mode for a newly created branch.
+    pub track: TrackMode,
+}
+
+impl Default for CreateOpts {
+    fn default() -> Self {
+        CreateOpts {
+            branch: None,
+            base: None,
+            from_current: false,
+            folder: None,
+            name: None,
+            force: false,
+            fetch: true,
+            remote: None,
+            track: TrackMode::Auto,
+        }
+    }
 }
 
 /// Options for [`Grove::remove`].
@@ -107,8 +135,27 @@ impl Grove {
     /// The on-disk path a worktree for `branch` would occupy.
     #[must_use]
     pub fn folder_for(&self, branch: &str) -> PathBuf {
-        let folder = format!("{}{}", self.config.worktrees_prefix, sanitize(branch));
+        self.folder_named(&sanitize(branch))
+    }
+
+    /// The on-disk path for an already-sanitized folder name (with prefix).
+    #[must_use]
+    fn folder_named(&self, name: &str) -> PathBuf {
+        let folder = format!("{}{}", self.config.worktrees_prefix, name);
         self.worktrees_dir().join(folder)
+    }
+
+    /// Build the copy specification from config plus a `.worktreeinclude` file
+    /// at the main worktree root (its globs merge into the file includes).
+    pub fn copy_spec(&self) -> Result<CopySpec> {
+        let mut include = self.config.copy_include.clone();
+        include.extend(read_worktreeinclude(&self.root)?);
+        Ok(CopySpec {
+            include,
+            exclude: self.config.copy_exclude.clone(),
+            include_dirs: self.config.copy_include_dirs.clone(),
+            exclude_dirs: self.config.copy_exclude_dirs.clone(),
+        })
     }
 
     /// Find an existing worktree by branch name or folder name.
@@ -131,10 +178,7 @@ impl Grove {
     /// Create a new worktree. Returns its path.
     pub fn create(&self, name: &str, opts: &CreateOpts) -> Result<PathBuf> {
         let branch = opts.branch.clone().unwrap_or_else(|| name.to_string());
-        let folder = opts.folder.as_ref().map_or_else(
-            || self.folder_for(&branch),
-            |f| self.worktrees_dir().join(f),
-        );
+        let folder = self.resolve_folder(&branch, opts);
 
         if folder.exists() {
             return Err(CoreError::DestExists(folder));
@@ -146,15 +190,93 @@ impl Grove {
             })?;
         }
 
+        let remote = opts
+            .remote
+            .as_deref()
+            .unwrap_or_else(|| self.config.remote());
+        if opts.fetch {
+            // Best-effort: a missing remote or offline network shouldn't block
+            // creating a worktree from local refs.
+            let _ = self.repo.fetch(remote);
+        }
+
         let create_branch = !self.repo.branch_exists(&branch)?;
-        self.repo.add_worktree(
-            &folder,
-            &branch,
-            create_branch,
-            opts.base.as_deref(),
-            opts.force,
-        )?;
+        let base = if create_branch {
+            self.resolve_base(&branch, remote, opts)?
+        } else {
+            None
+        };
+        self.repo
+            .add_worktree(&folder, &branch, create_branch, base.as_deref(), opts.force)?;
+
+        if create_branch {
+            self.apply_tracking(&branch, remote, opts.track)?;
+        }
         Ok(folder)
+    }
+
+    /// Resolve the worktree folder path: explicit `--folder` wins; otherwise the
+    /// sanitized branch plus an optional `--name` suffix.
+    fn resolve_folder(&self, branch: &str, opts: &CreateOpts) -> PathBuf {
+        if let Some(folder) = &opts.folder {
+            return self.worktrees_dir().join(folder);
+        }
+        let mut name = sanitize(branch);
+        if let Some(suffix) = &opts.name {
+            name = format!("{name}-{suffix}");
+        }
+        self.folder_named(&name)
+    }
+
+    /// Choose the start point for a newly created branch.
+    fn resolve_base(
+        &self,
+        branch: &str,
+        remote: &str,
+        opts: &CreateOpts,
+    ) -> Result<Option<String>> {
+        if opts.from_current {
+            return Ok(self
+                .repo
+                .current_branch()?
+                .or_else(|| Some("HEAD".to_string())));
+        }
+        if let Some(base) = &opts.base {
+            return Ok(Some(base.clone()));
+        }
+        // Check out an existing remote branch of the same name when present.
+        if self.repo.remote_branch_exists(remote, branch)? {
+            return Ok(Some(format!("{remote}/{branch}")));
+        }
+        // Otherwise branch off the remote's default branch.
+        Ok(Some(self.default_base(remote)))
+    }
+
+    /// The default base ref: `<remote>/<defaultBranch>`, detecting the remote
+    /// HEAD when not configured.
+    fn default_base(&self, remote: &str) -> String {
+        let branch = self
+            .config
+            .default_branch
+            .clone()
+            .or_else(|| self.repo.remote_head_branch(remote).ok().flatten())
+            .unwrap_or_else(|| "main".to_string());
+        format!("{remote}/{branch}")
+    }
+
+    /// Set the new branch's upstream according to `track`.
+    fn apply_tracking(&self, branch: &str, remote: &str, track: TrackMode) -> Result<()> {
+        let want_upstream = match track {
+            TrackMode::None | TrackMode::Local => false,
+            TrackMode::Remote => true,
+            TrackMode::Auto => self.repo.remote_branch_exists(remote, branch)?,
+        };
+        if want_upstream && self.repo.remote_branch_exists(remote, branch)? {
+            let _ = self
+                .repo
+                .set_upstream(branch, &format!("{remote}/{branch}"));
+        }
+        Ok(())
     }
 
     /// Remove a worktree (and optionally its branch).
