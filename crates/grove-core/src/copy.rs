@@ -8,11 +8,53 @@
 
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 use globset::{Glob, GlobSet, GlobSetBuilder};
+pub use reflink_copy::ReflinkSupport;
 
 use crate::{CoreError, Result};
+
+/// Detect whether copy-on-write reflinks work between `from` and `to` (e.g.
+/// both on the same btrfs/XFS/APFS/ReFS volume). Used by `grove doctor` to tell
+/// the user whether worktree copies will be cheap clones.
+///
+/// `reflink_copy::check_reflink_support` is only meaningful on Windows; on Unix
+/// it always reports `Unknown`, so we run a real probe instead — create a tiny
+/// temp file under `from` and attempt to reflink it into `to`. The probe files
+/// are removed immediately. The actual copy path ([`copy_dirs`]) does the right
+/// thing regardless via [`reflink_copy::reflink_or_copy`]; this is for reporting.
+#[must_use]
+pub fn reflink_support(from: &Path, to: &Path) -> ReflinkSupport {
+    if cfg!(windows) {
+        return reflink_copy::check_reflink_support(from, to).unwrap_or(ReflinkSupport::Unknown);
+    }
+    if !from.is_dir() || !to.is_dir() {
+        return ReflinkSupport::Unknown;
+    }
+    let nonce = probe_nonce();
+    let src = from.join(format!(".grove-reflink-probe-src-{nonce}"));
+    let dst = to.join(format!(".grove-reflink-probe-dst-{nonce}"));
+    let outcome = fs::write(&src, b"grove-reflink-probe").and_then(|()| {
+        // `reflink` (not `reflink_or_copy`) errors when CoW is unavailable —
+        // that's what distinguishes Supported from NotSupported.
+        reflink_copy::reflink(&src, &dst)
+    });
+    let _ = fs::remove_file(&src);
+    let _ = fs::remove_file(&dst);
+    match outcome {
+        Ok(()) => ReflinkSupport::Supported,
+        Err(_) => ReflinkSupport::NotSupported,
+    }
+}
+
+/// A best-effort unique suffix for probe files (no randomness needed).
+fn probe_nonce() -> u128 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0)
+        ^ u128::from(std::process::id())
+}
 
 /// What to copy from a source worktree into a target one.
 #[derive(Debug, Default, Clone)]
@@ -117,9 +159,10 @@ pub fn copy_files(
     Ok(matches)
 }
 
-/// Copy each directory in `dirs` from `from` into `to`, pruning subpaths that
-/// match an `exclude_dirs` glob. Uses copy-on-write when the platform supports
-/// it, falling back to a plain recursive copy.
+/// Copy each directory in `dirs` from `from` into `to`, skipping any subpath
+/// that matches an `exclude_dirs` glob. Each file is cloned copy-on-write via a
+/// reflink where the filesystem supports it (btrfs/XFS/APFS/ReFS), falling back
+/// to a normal copy otherwise; symlinks are recreated as links.
 ///
 /// Returns the relative directory paths that were copied (or would be, when
 /// `dry_run`). A directory missing in `from` is silently skipped.
@@ -149,45 +192,14 @@ pub fn copy_dirs(
         if dry_run {
             continue;
         }
-        let dst = to.join(&rel);
-        if let Some(parent) = dst.parent() {
-            fs::create_dir_all(parent).map_err(|source| CoreError::Io {
-                path: parent.to_path_buf(),
-                source,
-            })?;
-        }
-        cow_copy_dir(&src, &dst)?;
-        prune_excludes(to, &rel, &exclude_set)?;
+        copy_tree(&src, &to.join(&rel), to, &exclude_set)?;
     }
     Ok(copied)
 }
 
-/// Copy `src` directory to `dst` using a copy-on-write clone where available.
-///
-/// On macOS this uses `cp -cR` (APFS clone); on Linux `cp -a --reflink=auto`
-/// (btrfs/xfs reflink, plain copy otherwise). If `cp` is unavailable or fails,
-/// falls back to a recursive in-process copy.
-fn cow_copy_dir(src: &Path, dst: &Path) -> Result<()> {
-    let args: &[&str] = if cfg!(target_os = "macos") {
-        &["-cR"]
-    } else {
-        &["-a", "--reflink=auto"]
-    };
-    let ran = Command::new("cp")
-        .args(args)
-        .arg(src)
-        .arg(dst)
-        .status()
-        .map(|s| s.success())
-        .unwrap_or(false);
-    if ran {
-        return Ok(());
-    }
-    recursive_copy(src, dst)
-}
-
-/// Plain recursive directory copy (fallback when CoW `cp` is unavailable).
-fn recursive_copy(src: &Path, dst: &Path) -> Result<()> {
+/// Recursively copy `src` into `dst`, reflinking files where possible and
+/// skipping entries whose path (relative to `to_root`) matches `exclude`.
+fn copy_tree(src: &Path, dst: &Path, to_root: &Path, exclude: &GlobSet) -> Result<()> {
     fs::create_dir_all(dst).map_err(|source| CoreError::Io {
         path: dst.to_path_buf(),
         source,
@@ -201,72 +213,60 @@ fn recursive_copy(src: &Path, dst: &Path) -> Result<()> {
             path: src.to_path_buf(),
             source,
         })?;
-        let file_type = entry.file_type().map_err(|source| CoreError::Io {
-            path: entry.path(),
-            source,
-        })?;
         let child_src = entry.path();
         let child_dst = dst.join(entry.file_name());
+        if let Ok(rel) = child_dst.strip_prefix(to_root) {
+            if exclude.is_match(rel) {
+                continue;
+            }
+        }
+        let file_type = entry.file_type().map_err(|source| CoreError::Io {
+            path: child_src.clone(),
+            source,
+        })?;
         if file_type.is_dir() {
-            recursive_copy(&child_src, &child_dst)?;
+            copy_tree(&child_src, &child_dst, to_root, exclude)?;
+        } else if file_type.is_symlink() {
+            copy_symlink(&child_src, &child_dst)?;
         } else {
-            fs::copy(&child_src, &child_dst).map_err(|source| CoreError::Io {
-                path: child_dst,
-                source,
+            // Reflink (copy-on-write) when supported; falls back to a full copy.
+            reflink_copy::reflink_or_copy(&child_src, &child_dst).map_err(|source| {
+                CoreError::Io {
+                    path: child_dst.clone(),
+                    source,
+                }
             })?;
         }
     }
     Ok(())
 }
 
-/// Remove any path under `<to>/<rel>` whose path relative to `to` matches an
-/// `exclude` glob. Walks top-down and deletes the matched subtree.
-fn prune_excludes(to: &Path, rel: &Path, exclude: &GlobSet) -> Result<()> {
-    if exclude.is_empty() {
-        return Ok(());
-    }
-    let mut to_remove = Vec::new();
-    collect_excluded(to, &to.join(rel), exclude, &mut to_remove)?;
-    // Deepest paths first so a parent removal never invalidates a child path.
-    to_remove.sort_by_key(|p| core::cmp::Reverse(p.components().count()));
-    for path in to_remove {
-        if path.is_dir() {
-            let _ = fs::remove_dir_all(&path);
-        } else {
-            let _ = fs::remove_file(&path);
-        }
-    }
-    Ok(())
+/// Recreate the symlink at `src` (pointing at the same target) at `dst`.
+fn copy_symlink(src: &Path, dst: &Path) -> Result<()> {
+    let target = fs::read_link(src).map_err(|source| CoreError::Io {
+        path: src.to_path_buf(),
+        source,
+    })?;
+    symlink_to(&target, dst)
 }
 
-/// Gather absolute paths under `dir` that match an exclude glob (relative to `to`).
-fn collect_excluded(
-    to: &Path,
-    dir: &Path,
-    exclude: &GlobSet,
-    out: &mut Vec<PathBuf>,
-) -> Result<()> {
-    let entries = match fs::read_dir(dir) {
-        Ok(e) => e,
-        Err(_) => return Ok(()),
-    };
-    for entry in entries {
-        let entry = entry.map_err(|source| CoreError::Io {
-            path: dir.to_path_buf(),
+#[cfg(unix)]
+fn symlink_to(target: &Path, dst: &Path) -> Result<()> {
+    std::os::unix::fs::symlink(target, dst).map_err(|source| CoreError::Io {
+        path: dst.to_path_buf(),
+        source,
+    })
+}
+
+#[cfg(not(unix))]
+fn symlink_to(target: &Path, dst: &Path) -> Result<()> {
+    // Non-unix: best-effort copy of the link target's contents.
+    fs::copy(target, dst)
+        .map(|_| ())
+        .map_err(|source| CoreError::Io {
+            path: dst.to_path_buf(),
             source,
-        })?;
-        let path = entry.path();
-        if let Ok(rel) = path.strip_prefix(to) {
-            if exclude.is_match(rel) {
-                out.push(path.clone());
-                continue;
-            }
-        }
-        if path.is_dir() {
-            collect_excluded(to, &path, exclude, out)?;
-        }
-    }
-    Ok(())
+        })
 }
 
 /// Build a [`GlobSet`] from `patterns` (empty patterns yield an empty set).

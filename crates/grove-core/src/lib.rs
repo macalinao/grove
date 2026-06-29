@@ -15,7 +15,10 @@ pub use grove_git::{ConfigScope, GitError, Repo, Worktree};
 
 pub mod copy;
 
-pub use copy::{CopySpec, copy_dirs, copy_files, copy_into, read_worktreeinclude};
+pub use copy::{
+    CopySpec, ReflinkSupport, copy_dirs, copy_files, copy_into, read_worktreeinclude,
+    reflink_support,
+};
 
 /// Errors from worktree lifecycle operations.
 #[derive(thiserror::Error, Debug)]

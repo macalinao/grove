@@ -30,6 +30,7 @@ bpaf = { version = "0.9", features = ["derive", "autocomplete"] }
 console = "0.16"
 globset = "0.4"
 kdl = "6"
+reflink-copy = "0.1"
 sha2 = "0.10"
 
 [profile.release]
