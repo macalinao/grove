@@ -193,11 +193,14 @@ impl TestRepo {
 
     fn base_cmd(&self, program: &str, dir: &Path) -> Command {
         let mut cmd = Command::new(program);
+        // Output is captured (piped), so `console` auto-detects no TTY and emits
+        // no color by default; we don't force NO_COLOR, so the grove.ui.color
+        // config path stays observable. GROVE_COLOR is cleared for determinism.
         cmd.current_dir(dir)
             .env("GIT_CONFIG_GLOBAL", &self.global_cfg)
             .env("GIT_CONFIG_SYSTEM", "/dev/null")
-            .env("NO_COLOR", "1")
-            .env_remove("GROVE_COLOR");
+            .env_remove("GROVE_COLOR")
+            .env_remove("NO_COLOR");
         cmd
     }
 }

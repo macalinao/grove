@@ -32,6 +32,9 @@ pub enum CoreError {
     #[error("no worktree matching '{0}'")]
     NotFound(String),
 
+    #[error("--track: {0}")]
+    Track(String),
+
     #[error("destination already exists: {0}")]
     DestExists(PathBuf),
 
@@ -222,18 +225,12 @@ impl Grove {
             let _ = self.repo.fetch(remote);
         }
 
-        let create_branch = !self.repo.branch_exists(&branch)?;
-        let base = if create_branch {
-            self.resolve_base(&branch, remote, opts)?
-        } else {
-            None
-        };
+        let (create_branch, base) = self.plan_branch(&branch, remote, opts)?;
         self.repo
             .add_worktree(&folder, &branch, create_branch, base.as_deref(), opts.force)?;
-
-        if create_branch {
-            self.apply_tracking(&branch, remote, opts.track)?;
-        }
+        // Upstream tracking follows from the base ref: git auto-tracks when the
+        // start point is a remote-tracking branch (matching gtr, which likewise
+        // doesn't suppress it).
         Ok(folder)
     }
 
@@ -250,24 +247,58 @@ impl Grove {
         self.folder_named(&name)
     }
 
-    /// Choose the start point for a newly created branch.
-    fn resolve_base(
+    /// Decide whether to create a new branch and its start point, following
+    /// gtr's `--track` case structure (`auto`/`remote`/`local`/`none`).
+    ///
+    /// Returns `(create_branch, base)` for [`grove_git::Repo::add_worktree`].
+    fn plan_branch(
         &self,
         branch: &str,
         remote: &str,
         opts: &CreateOpts,
-    ) -> Result<Option<String>> {
+    ) -> Result<(bool, Option<String>)> {
+        let local = self.repo.branch_exists(branch)?;
+        let remote_b = self.repo.remote_branch_exists(remote, branch)?;
+        let remote_ref = format!("{remote}/{branch}");
+
+        match opts.track {
+            TrackMode::Remote => {
+                if !remote_b {
+                    return Err(CoreError::Track(format!(
+                        "remote branch '{remote_ref}' does not exist"
+                    )));
+                }
+                Ok((true, Some(remote_ref)))
+            }
+            TrackMode::Local => {
+                if !local {
+                    return Err(CoreError::Track(format!(
+                        "local branch '{branch}' does not exist"
+                    )));
+                }
+                Ok((false, None))
+            }
+            // `none` ignores a same-named remote branch and branches off the
+            // resolved from-ref.
+            TrackMode::None if local => Ok((false, None)),
+            TrackMode::None => Ok((true, self.from_ref(remote, opts)?)),
+            // `auto`: track an existing remote branch, reuse an existing local
+            // branch, else create a new one from the from-ref.
+            TrackMode::Auto if remote_b && !local => Ok((true, Some(remote_ref))),
+            TrackMode::Auto if local => Ok((false, None)),
+            TrackMode::Auto => Ok((true, self.from_ref(remote, opts)?)),
+        }
+    }
+
+    /// The start point for a brand-new branch: `--from-current` HEAD, an explicit
+    /// `--from`, else the remote's default branch (or `None` → git uses HEAD).
+    fn from_ref(&self, remote: &str, opts: &CreateOpts) -> Result<Option<String>> {
         if opts.from_current {
             return Ok(self.repo.current_branch()?);
         }
         if let Some(base) = &opts.base {
             return Ok(Some(base.clone()));
         }
-        // Check out an existing remote branch of the same name when present.
-        if self.repo.remote_branch_exists(remote, branch)? {
-            return Ok(Some(format!("{remote}/{branch}")));
-        }
-        // Otherwise branch off the remote's default branch, if it resolves.
         self.default_base(remote)
     }
 
@@ -288,21 +319,6 @@ impl Grove {
             }
         }
         Ok(None)
-    }
-
-    /// Set the new branch's upstream according to `track`.
-    fn apply_tracking(&self, branch: &str, remote: &str, track: TrackMode) -> Result<()> {
-        let want_upstream = match track {
-            TrackMode::None | TrackMode::Local => false,
-            TrackMode::Remote => true,
-            TrackMode::Auto => self.repo.remote_branch_exists(remote, branch)?,
-        };
-        if want_upstream && self.repo.remote_branch_exists(remote, branch)? {
-            let _ = self
-                .repo
-                .set_upstream(branch, &format!("{remote}/{branch}"));
-        }
-        Ok(())
     }
 
     /// Remove a worktree (and optionally its branch).

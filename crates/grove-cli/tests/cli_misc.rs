@@ -104,6 +104,52 @@ fn custom_ai_adapter_runs_in_worktree_cwd() {
 }
 
 #[test]
+fn ai_passes_extra_args_through() {
+    let r = TestRepo::new();
+    ok(&r.grove(&["new", "feature", "--no-fetch", "--no-copy"]));
+    // A fake AI tool records the arguments it received.
+    r.write_exec(
+        "myai",
+        "#!/bin/sh\nprintf '%s ' \"$@\" > \"$GROVE_TEST_MARK\"\n",
+    );
+    r.set_config("grove.ai.ma.command", "myai");
+    let mark = r.path("AI_ARGS");
+    let out = r.grove_env(
+        &["ai", "feature", "--ai", "ma", "--", "--model", "sonnet"],
+        &[("GROVE_TEST_MARK", &mark.to_string_lossy())],
+    );
+    assert!(out.status.success(), "stderr: {}", common::stderr(&out));
+    let args = std::fs::read_to_string(&mark).unwrap();
+    assert!(
+        args.contains("--model") && args.contains("sonnet"),
+        "args: {args}"
+    );
+}
+
+#[test]
+fn default_editor_used_without_override() {
+    let r = TestRepo::new();
+    ok(&r.grove(&["new", "feature", "--no-fetch", "--no-copy"]));
+    r.write_exec(
+        "myeditor",
+        "#!/bin/sh\nprintf '%s' \"$1\" > \"$GROVE_TEST_MARK\"\n",
+    );
+    // No --editor flag: falls back to grove.editor.default.
+    r.set_config("grove.editor.default", "myed");
+    r.set_config("grove.editor.myed.command", "myeditor");
+    let mark = r.path("DEFAULT_EDITOR");
+    let out = r.grove_env(
+        &["editor", "feature"],
+        &[("GROVE_TEST_MARK", &mark.to_string_lossy())],
+    );
+    assert!(out.status.success(), "stderr: {}", common::stderr(&out));
+    assert_eq!(
+        std::fs::read_to_string(&mark).unwrap(),
+        r.wt("feature").to_string_lossy()
+    );
+}
+
+#[test]
 fn unknown_editor_adapter_errors() {
     let r = TestRepo::new();
     ok(&r.grove(&["new", "feature", "--no-fetch", "--no-copy"]));

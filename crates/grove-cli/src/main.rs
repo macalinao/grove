@@ -15,6 +15,6 @@ mod ui;
 
 fn main() -> Result<()> {
     let opts = commands::opts().run();
-    ui::apply_color_env();
+    ui::apply_color();
     commands::execute(opts.command)
 }

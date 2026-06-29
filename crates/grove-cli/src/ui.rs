@@ -5,19 +5,52 @@ use std::path::Path;
 
 use anyhow::Result;
 
-/// Apply color preferences from the environment, mirroring gtr's precedence:
-/// `NO_COLOR` (disable, per no-color.org) wins over `GROVE_COLOR`
-/// (`always`/`never`/`auto`); otherwise `console`'s auto-detection stands.
-pub fn apply_color_env() {
+/// Apply color preferences, mirroring gtr's precedence:
+/// `NO_COLOR` (disable, per no-color.org) > `GROVE_COLOR` (`always`/`never`) >
+/// the `grove.ui.color` / `gtr.ui.color` git-config value > `console`'s
+/// auto-detection.
+pub fn apply_color() {
     if std::env::var_os("NO_COLOR").is_some() {
         console::set_colors_enabled(false);
         return;
     }
     match std::env::var("GROVE_COLOR").as_deref() {
-        Ok("always") => console::set_colors_enabled(true),
-        Ok("never") => console::set_colors_enabled(false),
+        Ok("always") => {
+            console::set_colors_enabled(true);
+            return;
+        }
+        Ok("never") => {
+            console::set_colors_enabled(false);
+            return;
+        }
         _ => {}
     }
+    // Lightweight git-config read (covers the common case without loading the
+    // full layered config); a missing repo/key is a harmless no-op.
+    if let Some(v) = config_color() {
+        match v.as_str() {
+            "always" => console::set_colors_enabled(true),
+            "never" => console::set_colors_enabled(false),
+            _ => {}
+        }
+    }
+}
+
+/// Read `grove.ui.color`, falling back to `gtr.ui.color`, from git config.
+fn config_color() -> Option<String> {
+    for key in ["grove.ui.color", "gtr.ui.color"] {
+        let out = std::process::Command::new("git")
+            .args(["config", "--get", key])
+            .output()
+            .ok()?;
+        if out.status.success() {
+            let v = String::from_utf8_lossy(&out.stdout).trim().to_string();
+            if !v.is_empty() {
+                return Some(v);
+            }
+        }
+    }
+    None
 }
 
 /// Is `program` an executable found on `PATH`? Used by `grove adapter` to mark

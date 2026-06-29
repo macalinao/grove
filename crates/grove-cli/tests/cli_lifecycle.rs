@@ -68,6 +68,17 @@ fn mv_renames_worktree_and_branch() {
 }
 
 #[test]
+fn mv_force_flag_is_accepted() {
+    let r = TestRepo::new();
+    ok(&r.grove(&["new", "old", "--no-fetch"]));
+    // gtr passes a single `git worktree move --force`; like gtr it renames a
+    // normal worktree (a *locked* one needs `-f -f`, which neither tool does).
+    ok(&r.grove(&["mv", "old", "new", "--yes", "--force"]));
+    assert!(r.wt("new").is_dir());
+    assert!(!r.wt("old").exists());
+}
+
+#[test]
 fn mv_without_yes_on_non_tty_aborts() {
     let r = TestRepo::new();
     ok(&r.grove(&["new", "old", "--no-fetch"]));

@@ -243,6 +243,33 @@ fn no_remote_new_grove_succeeds_where_gtr_fails() {
 }
 
 #[test]
+fn track_auto_upstream_matches() {
+    let gtr = gtr_or_skip!();
+    let p = Pair::new(gtr);
+    // Publish origin/shared on both sides, drop it locally.
+    for r in [&p.grove, &p.gtr_repo] {
+        r.git(&["branch", "shared"]);
+        r.git(&["push", "-q", "origin", "shared"]);
+        r.git(&["branch", "-D", "shared"]);
+    }
+    p.g(&["new", "shared", "--no-fetch"]);
+    p.t(&["new", "shared", "--no-fetch", "--yes"]);
+    let upstream = |r: &TestRepo| {
+        String::from_utf8_lossy(
+            &r.git(&["rev-parse", "--abbrev-ref", "shared@{upstream}"])
+                .stdout,
+        )
+        .trim()
+        .to_string()
+    };
+    assert_eq!(
+        upstream(&p.grove),
+        upstream(&p.gtr_repo),
+        "default-track upstream differs (grove vs gtr)"
+    );
+}
+
+#[test]
 fn remove_matches() {
     let gtr = gtr_or_skip!();
     let p = Pair::new(gtr);
