@@ -11,8 +11,10 @@ use anyhow::Result;
 mod commands;
 mod hooks;
 mod launch;
+mod ui;
 
 fn main() -> Result<()> {
     let opts = commands::opts().run();
+    ui::apply_color_env();
     commands::execute(opts.command)
 }

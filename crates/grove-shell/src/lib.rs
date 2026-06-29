@@ -63,7 +63,10 @@ const POSIX: &str = r#"grove() {
     shift
     local _grove_dir
     _grove_dir="$(command grove go "$@")" || return $?
-    [ -n "$_grove_dir" ] && builtin cd "$_grove_dir"
+    if [ -n "$_grove_dir" ]; then
+      builtin cd "$_grove_dir" || return $?
+      eval "$(command grove post-cd "$_grove_dir" 2>/dev/null)"
+    fi
   else
     command grove "$@"
   fi
@@ -73,7 +76,10 @@ const POSIX: &str = r#"grove() {
 const FISH: &str = r#"function grove
     if test "$argv[1]" = cd
         set -l _grove_dir (command grove go $argv[2..-1]); or return $status
-        test -n "$_grove_dir"; and builtin cd $_grove_dir
+        if test -n "$_grove_dir"
+            builtin cd $_grove_dir; or return $status
+            command grove post-cd $_grove_dir 2>/dev/null | source
+        end
     else
         command grove $argv
     end

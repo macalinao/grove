@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 pub use grove_config::{
     Config, ConfigError, TrackMode, TrustStatus, is_trusted, record_trust, trust_status,
 };
-pub use grove_git::{GitError, Repo, Worktree};
+pub use grove_git::{ConfigScope, GitError, Repo, Worktree};
 
 pub mod copy;
 
@@ -236,10 +236,7 @@ impl Grove {
         opts: &CreateOpts,
     ) -> Result<Option<String>> {
         if opts.from_current {
-            return Ok(self
-                .repo
-                .current_branch()?
-                .or_else(|| Some("HEAD".to_string())));
+            return Ok(self.repo.current_branch()?);
         }
         if let Some(base) = &opts.base {
             return Ok(Some(base.clone()));
@@ -248,20 +245,27 @@ impl Grove {
         if self.repo.remote_branch_exists(remote, branch)? {
             return Ok(Some(format!("{remote}/{branch}")));
         }
-        // Otherwise branch off the remote's default branch.
-        Ok(Some(self.default_base(remote)))
+        // Otherwise branch off the remote's default branch, if it resolves.
+        self.default_base(remote)
     }
 
-    /// The default base ref: `<remote>/<defaultBranch>`, detecting the remote
-    /// HEAD when not configured.
-    fn default_base(&self, remote: &str) -> String {
-        let branch = self
-            .config
-            .default_branch
-            .clone()
-            .or_else(|| self.repo.remote_head_branch(remote).ok().flatten())
-            .unwrap_or_else(|| "main".to_string());
-        format!("{remote}/{branch}")
+    /// The default base ref — the remote's default branch tip — or `None` when
+    /// none resolves (e.g. a repo with no remote), so git falls back to HEAD.
+    fn default_base(&self, remote: &str) -> Result<Option<String>> {
+        if let Some(b) = &self.config.default_branch {
+            for cand in [format!("{remote}/{b}"), b.clone()] {
+                if self.repo.has_ref(&cand)? {
+                    return Ok(Some(cand));
+                }
+            }
+        }
+        if let Some(b) = self.repo.remote_head_branch(remote)? {
+            let cand = format!("{remote}/{b}");
+            if self.repo.has_ref(&cand)? {
+                return Ok(Some(cand));
+            }
+        }
+        Ok(None)
     }
 
     /// Set the new branch's upstream according to `track`.
@@ -310,9 +314,19 @@ impl Grove {
 }
 
 /// Make a branch name safe to use as a directory component.
+///
+/// Slashes and other characters that aren't alphanumeric or `-_.` become
+/// hyphens; `#` is dropped (it would start a shebang/comment in some contexts).
 #[must_use]
 pub fn sanitize(branch: &str) -> String {
-    branch.replace('/', "-")
+    branch
+        .chars()
+        .filter_map(|c| match c {
+            '#' => None,
+            c if c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.') => Some(c),
+            _ => Some('-'),
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -324,5 +338,12 @@ mod tests {
     fn sanitizes_slashes() {
         assert_eq!(sanitize("feat/x"), "feat-x");
         assert_eq!(sanitize("plain"), "plain");
+    }
+
+    #[test]
+    fn sanitizes_special_chars_and_drops_hash() {
+        assert_eq!(sanitize("feature/JIRA-123_v1.2"), "feature-JIRA-123_v1.2");
+        assert_eq!(sanitize("fix#42"), "fix42");
+        assert_eq!(sanitize("a b:c"), "a-b-c");
     }
 }

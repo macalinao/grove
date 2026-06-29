@@ -36,6 +36,30 @@ impl Worktree {
     }
 }
 
+/// Which git-config file a write/read targets.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ConfigScope {
+    /// The repository's `.git/config` (git's default for writes).
+    #[default]
+    Local,
+    /// The user's `~/.gitconfig`.
+    Global,
+    /// The system-wide `/etc/gitconfig`.
+    System,
+}
+
+impl ConfigScope {
+    /// The git CLI flag for this scope (`Local` adds none, matching git's default).
+    #[must_use]
+    pub fn flag(self) -> Option<&'static str> {
+        match self {
+            ConfigScope::Local => None,
+            ConfigScope::Global => Some("--global"),
+            ConfigScope::System => Some("--system"),
+        }
+    }
+}
+
 /// A handle to a git repository, rooted at one of its worktrees.
 #[derive(Debug, Clone)]
 pub struct Repo {
@@ -128,32 +152,42 @@ impl Repo {
         }
     }
 
-    /// Set a git config value (`git config [--global] <key> <value>`).
+    /// Set a git config value (`git config [scope] <key> <value>`), replacing
+    /// any existing value(s).
     ///
     /// # Errors
     /// Returns an error if `git` cannot be spawned or the command fails.
-    pub fn config_set(&self, key: &str, value: &str, global: bool) -> Result<()> {
+    pub fn config_set(&self, key: &str, value: &str, scope: ConfigScope) -> Result<()> {
         let mut args: Vec<&str> = vec!["config"];
-        if global {
-            args.push("--global");
-        }
+        args.extend(scope.flag());
         args.extend_from_slice(&[key, value]);
         self.git(&args)?;
         Ok(())
     }
 
-    /// Unset a git config value (`git config [--global] --unset <key>`).
+    /// Add a value to a (possibly multi-valued) git config key
+    /// (`git config [scope] --add <key> <value>`).
+    ///
+    /// # Errors
+    /// Returns an error if `git` cannot be spawned or the command fails.
+    pub fn config_add(&self, key: &str, value: &str, scope: ConfigScope) -> Result<()> {
+        let mut args: Vec<&str> = vec!["config"];
+        args.extend(scope.flag());
+        args.extend_from_slice(&["--add", key, value]);
+        self.git(&args)?;
+        Ok(())
+    }
+
+    /// Unset a git config value (`git config [scope] --unset <key>`).
     ///
     /// A missing key (git exit code 5) is treated as a successful no-op.
     ///
     /// # Errors
     /// Returns an error if `git` cannot be spawned or the command fails for a
     /// reason other than the key being absent.
-    pub fn config_unset(&self, key: &str, global: bool) -> Result<()> {
+    pub fn config_unset(&self, key: &str, scope: ConfigScope) -> Result<()> {
         let mut args: Vec<&str> = vec!["config"];
-        if global {
-            args.push("--global");
-        }
+        args.extend(scope.flag());
         args.extend_from_slice(&["--unset", key]);
 
         let output = Command::new("git")
@@ -252,6 +286,11 @@ impl Repo {
     /// Does the remote-tracking branch `<remote>/<branch>` exist?
     pub fn remote_branch_exists(&self, remote: &str, branch: &str) -> Result<bool> {
         self.ref_exists(&format!("refs/remotes/{remote}/{branch}"))
+    }
+
+    /// Does `spec` resolve to an existing ref or commit (quietly)?
+    pub fn has_ref(&self, spec: &str) -> Result<bool> {
+        self.ref_exists(spec)
     }
 
     /// Does `spec` resolve to an existing ref (quietly)?
@@ -605,17 +644,29 @@ detached
         let repo = Repo::discover_from(&dir).unwrap();
 
         assert_eq!(repo.config_get("grove.test.key").unwrap(), None);
-        repo.config_set("grove.test.key", "hello", false).unwrap();
+        repo.config_set("grove.test.key", "hello", ConfigScope::Local)
+            .unwrap();
         assert_eq!(
             repo.config_get("grove.test.key").unwrap().as_deref(),
             Some("hello")
         );
         let listed = repo.config_list_grove().unwrap();
         assert!(listed.contains(&("grove.test.key".to_string(), "hello".to_string())));
-        repo.config_unset("grove.test.key", false).unwrap();
+        // --add appends a second value to the multi-valued key.
+        repo.config_add("grove.test.multi", "a", ConfigScope::Local)
+            .unwrap();
+        repo.config_add("grove.test.multi", "b", ConfigScope::Local)
+            .unwrap();
+        assert_eq!(
+            repo.config_get_all("grove.test.multi").unwrap(),
+            vec!["a".to_string(), "b".to_string()]
+        );
+        repo.config_unset("grove.test.key", ConfigScope::Local)
+            .unwrap();
         assert_eq!(repo.config_get("grove.test.key").unwrap(), None);
         // Unsetting a missing key is a no-op.
-        repo.config_unset("grove.test.key", false).unwrap();
+        repo.config_unset("grove.test.key", ConfigScope::Local)
+            .unwrap();
 
         let _ = std::fs::remove_dir_all(&dir);
     }
