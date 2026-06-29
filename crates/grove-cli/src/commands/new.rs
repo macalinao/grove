@@ -110,7 +110,7 @@ pub fn execute(args: New) -> Result<()> {
     }
     if args.ai {
         let name = launch::ai_name(&grove, None)?;
-        launch::launch_ai(&name, &path, &[])?;
+        launch::launch_ai(&grove, &name, &path, &[])?;
     }
     Ok(())
 }

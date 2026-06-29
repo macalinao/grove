@@ -173,7 +173,12 @@ impl Grove {
     }
 
     /// Find an existing worktree by branch name or folder name.
+    ///
+    /// The special name `1` resolves to the main worktree (matching gtr).
     pub fn find(&self, name: &str) -> Result<Option<Worktree>> {
+        if name == "1" {
+            return Ok(self.list()?.into_iter().find(|w| w.path == self.root));
+        }
         let prefixed = format!("{}{}", self.config.worktrees_prefix, sanitize(name));
         Ok(self.list()?.into_iter().find(|w| {
             w.branch.as_deref() == Some(name)

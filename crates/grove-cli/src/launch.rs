@@ -37,7 +37,7 @@ pub fn ai_name(grove: &Grove, override_name: Option<&str>) -> Result<String> {
 /// For VS Code-style editors a workspace file is passed instead of the folder
 /// when one is configured (`grove.editor.workspace`) or auto-detected.
 pub fn open_editor(grove: &Grove, name: &str, path: &Path) -> Result<std::process::ExitStatus> {
-    let mut command = editor_argv(name)?;
+    let mut command = editor_command_argv(grove, name)?;
     command.push(editor_target(grove, name, path));
     let (program, rest) = command
         .split_first()
@@ -49,8 +49,13 @@ pub fn open_editor(grove: &Grove, name: &str, path: &Path) -> Result<std::proces
 }
 
 /// Launch the named AI tool with cwd set to `path`, waiting for it to exit.
-pub fn launch_ai(name: &str, path: &Path, extra: &[String]) -> Result<std::process::ExitStatus> {
-    let mut command = ai_argv(name)?;
+pub fn launch_ai(
+    grove: &Grove,
+    name: &str,
+    path: &Path,
+    extra: &[String],
+) -> Result<std::process::ExitStatus> {
+    let mut command = ai_command_argv(grove, name)?;
     command.extend_from_slice(extra);
     let (program, rest) = command
         .split_first()
@@ -60,6 +65,34 @@ pub fn launch_ai(name: &str, path: &Path, extra: &[String]) -> Result<std::proce
         .current_dir(path)
         .status()
         .map_err(|e| anyhow!("failed to launch `{program}`: {e}"))
+}
+
+/// Resolve an editor adapter to argv: a built-in, else a custom
+/// `grove.editor.<name>.command` from config.
+fn editor_command_argv(grove: &Grove, name: &str) -> Result<Vec<String>> {
+    match editor_argv(name) {
+        Ok(argv) => Ok(argv),
+        Err(builtin_err) => custom_argv(grove, "editor", name)?.ok_or_else(|| anyhow!(builtin_err)),
+    }
+}
+
+/// Resolve an AI adapter to argv: a built-in, else a custom
+/// `grove.ai.<name>.command` from config.
+fn ai_command_argv(grove: &Grove, name: &str) -> Result<Vec<String>> {
+    match ai_argv(name) {
+        Ok(argv) => Ok(argv),
+        Err(builtin_err) => custom_argv(grove, "ai", name)?.ok_or_else(|| anyhow!(builtin_err)),
+    }
+}
+
+/// Read a user-defined adapter command from `grove.<kind>.<name>.command` and
+/// split it into argv on whitespace.
+fn custom_argv(grove: &Grove, kind: &str, name: &str) -> Result<Option<Vec<String>>> {
+    let key = format!("grove.{kind}.{name}.command");
+    Ok(grove.repo.config_get(&key)?.and_then(|cmd| {
+        let argv: Vec<String> = cmd.split_whitespace().map(str::to_string).collect();
+        (!argv.is_empty()).then_some(argv)
+    }))
 }
 
 /// The trailing argument an editor opens: a workspace file when applicable,
