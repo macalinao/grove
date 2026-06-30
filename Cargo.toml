@@ -28,7 +28,9 @@ thiserror = "2"
 # binary completes itself; no `completion` subcommand needed).
 bpaf = { version = "0.9", features = ["derive", "autocomplete"] }
 console = "0.16"
-globset = "0.4"
+# `ignore` gives `.worktreeinclude` (and copy globs) real gitignore semantics
+# (anchoring, `!` negation, directory patterns).
+ignore = "0.4"
 kdl = "6"
 reflink-copy = "0.1"
 sha2 = "0.10"

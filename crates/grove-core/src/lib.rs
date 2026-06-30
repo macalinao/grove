@@ -44,10 +44,10 @@ pub enum CoreError {
         source: std::io::Error,
     },
 
-    #[error("invalid glob pattern '{pattern}': {source}")]
+    #[error("invalid copy pattern '{pattern}': {source}")]
     Glob {
         pattern: String,
-        source: globset::Error,
+        source: ignore::Error,
     },
 }
 

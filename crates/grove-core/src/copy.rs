@@ -1,15 +1,16 @@
 //! Smart file copy engine for `grove copy`.
 //!
 //! Copies files (typically untracked config/env files such as `.env`) from a
-//! source worktree into a target worktree by glob. Patterns come from the
-//! resolved [`grove_config::Config`] (or the CLI). Walks the source tree,
-//! skipping `.git`, and copies every file whose path matches an include glob
-//! and no exclude glob.
+//! source worktree into a target worktree. Patterns come from the resolved
+//! [`grove_config::Config`] (or the CLI) and the repo's `.worktreeinclude`, and
+//! are matched with **gitignore semantics** (anchoring, `!` negation, directory
+//! patterns) via the `ignore` crate. Walks the source tree, skipping `.git`,
+//! and copies every file matched by an include pattern and not by an exclude.
 
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use globset::{Glob, GlobSet, GlobSetBuilder};
+use ignore::gitignore::{Gitignore, GitignoreBuilder};
 pub use reflink_copy::ReflinkSupport;
 
 use crate::{CoreError, Result};
@@ -101,8 +102,9 @@ pub fn copy_into(from: &Path, to: &Path, spec: &CopySpec, dry_run: bool) -> Resu
     Ok(copied)
 }
 
-/// Read include globs from a `.worktreeinclude` file at `root` (gitignore-style:
-/// one pattern per line, `#` comments and blank lines ignored).
+/// Read include patterns from a `.worktreeinclude` file at `root` (gitignore
+/// syntax: one pattern per line, `#` comments and blank lines ignored). The
+/// patterns are matched with full gitignore semantics by [`copy_files`].
 ///
 /// Returns an empty vector when the file is absent.
 ///
@@ -144,8 +146,8 @@ pub fn copy_files(
     if include.is_empty() {
         return Ok(Vec::new());
     }
-    let include_set = build_globset(include)?;
-    let exclude_set = build_globset(exclude)?;
+    let include_set = build_matcher(include)?;
+    let exclude_set = build_matcher(exclude)?;
 
     let mut matches = Vec::new();
     collect_matches(from, from, &include_set, &exclude_set, &mut matches)?;
@@ -180,7 +182,7 @@ pub fn copy_dirs(
     if dirs.is_empty() {
         return Ok(Vec::new());
     }
-    let exclude_set = build_globset(exclude_dirs)?;
+    let exclude_set = build_matcher(exclude_dirs)?;
     let mut copied = Vec::new();
     for dir in dirs {
         let rel = PathBuf::from(dir);
@@ -199,7 +201,7 @@ pub fn copy_dirs(
 
 /// Recursively copy `src` into `dst`, reflinking files where possible and
 /// skipping entries whose path (relative to `to_root`) matches `exclude`.
-fn copy_tree(src: &Path, dst: &Path, to_root: &Path, exclude: &GlobSet) -> Result<()> {
+fn copy_tree(src: &Path, dst: &Path, to_root: &Path, exclude: &Gitignore) -> Result<()> {
     fs::create_dir_all(dst).map_err(|source| CoreError::Io {
         path: dst.to_path_buf(),
         source,
@@ -215,15 +217,15 @@ fn copy_tree(src: &Path, dst: &Path, to_root: &Path, exclude: &GlobSet) -> Resul
         })?;
         let child_src = entry.path();
         let child_dst = dst.join(entry.file_name());
-        if let Ok(rel) = child_dst.strip_prefix(to_root) {
-            if exclude.is_match(rel) {
-                continue;
-            }
-        }
         let file_type = entry.file_type().map_err(|source| CoreError::Io {
             path: child_src.clone(),
             source,
         })?;
+        if let Ok(rel) = child_dst.strip_prefix(to_root) {
+            if matches(exclude, rel, file_type.is_dir()) {
+                continue;
+            }
+        }
         if file_type.is_dir() {
             copy_tree(&child_src, &child_dst, to_root, exclude)?;
         } else if file_type.is_symlink() {
@@ -269,15 +271,21 @@ fn symlink_to(target: &Path, dst: &Path) -> Result<()> {
         })
 }
 
-/// Build a [`GlobSet`] from `patterns` (empty patterns yield an empty set).
-fn build_globset(patterns: &[String]) -> Result<GlobSet> {
-    let mut builder = GlobSetBuilder::new();
+/// Build a gitignore matcher from `patterns` (empty patterns match nothing).
+///
+/// Patterns use gitignore syntax relative to the worktree root, so `/foo`
+/// anchors to the top, `foo/` matches a directory and its contents, and a
+/// leading `!` negates an earlier pattern.
+fn build_matcher(patterns: &[String]) -> Result<Gitignore> {
+    // Empty root: query paths are already relative to the worktree.
+    let mut builder = GitignoreBuilder::new("");
     for pat in patterns {
-        let glob = Glob::new(pat).map_err(|source| CoreError::Glob {
-            pattern: pat.clone(),
-            source,
-        })?;
-        builder.add(glob);
+        builder
+            .add_line(None, pat)
+            .map_err(|source| CoreError::Glob {
+                pattern: pat.clone(),
+                source,
+            })?;
     }
     builder.build().map_err(|source| CoreError::Glob {
         pattern: patterns.join(", "),
@@ -285,12 +293,18 @@ fn build_globset(patterns: &[String]) -> Result<GlobSet> {
     })
 }
 
+/// Does `rel` match `set` as a positive (non-negated) pattern? Checks the path
+/// and its parent directories, so a `config/` pattern matches `config/app.json`.
+fn matches(set: &Gitignore, rel: &Path, is_dir: bool) -> bool {
+    set.matched_path_or_any_parents(rel, is_dir).is_ignore()
+}
+
 /// Recursively gather relative paths under `dir` matching the glob sets.
 fn collect_matches(
     root: &Path,
     dir: &Path,
-    include: &GlobSet,
-    exclude: &GlobSet,
+    include: &Gitignore,
+    exclude: &Gitignore,
     out: &mut Vec<PathBuf>,
 ) -> Result<()> {
     let entries = fs::read_dir(dir).map_err(|source| CoreError::Io {
@@ -323,14 +337,14 @@ fn collect_matches(
 fn consider_file(
     root: &Path,
     path: &Path,
-    include: &GlobSet,
-    exclude: &GlobSet,
+    include: &Gitignore,
+    exclude: &Gitignore,
     out: &mut Vec<PathBuf>,
 ) {
     let Ok(rel) = path.strip_prefix(root) else {
         return;
     };
-    if include.is_match(rel) && !exclude.is_match(rel) {
+    if matches(include, rel, false) && !matches(exclude, rel, false) {
         out.push(rel.to_path_buf());
     }
 }
@@ -359,37 +373,26 @@ fn copy_one(from: &Path, to: &Path, rel: &Path) -> Result<()> {
 mod tests {
     use super::*;
 
-    /// A self-cleaning temp directory.
+    /// A self-cleaning temp directory (deleted, even on panic, when dropped).
     struct TmpDir {
+        _dir: tempfile::TempDir,
         path: PathBuf,
     }
 
     impl TmpDir {
         fn new(tag: &str) -> TmpDir {
-            let mut path = std::env::temp_dir();
-            let unique = format!(
-                "grove-copy-{tag}-{}-{:?}",
-                std::process::id(),
-                std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap()
-                    .as_nanos()
-            );
-            path.push(unique);
-            fs::create_dir_all(&path).unwrap();
-            TmpDir { path }
+            let dir = tempfile::Builder::new()
+                .prefix(&format!("grove-copy-{tag}-"))
+                .tempdir()
+                .unwrap();
+            let path = dir.path().to_path_buf();
+            TmpDir { _dir: dir, path }
         }
 
         fn write(&self, rel: &str, contents: &str) {
             let p = self.path.join(rel);
             fs::create_dir_all(p.parent().unwrap()).unwrap();
             fs::write(p, contents).unwrap();
-        }
-    }
-
-    impl Drop for TmpDir {
-        fn drop(&mut self) {
-            let _ = fs::remove_dir_all(&self.path);
         }
     }
 
@@ -415,6 +418,57 @@ mod tests {
         assert!(!to.path.join("node_modules/x").exists());
         assert!(!to.path.join(".git/x").exists());
         assert!(!to.path.join("src/main.rs").exists());
+    }
+
+    #[test]
+    fn gitignore_negation_in_include_drops_file() {
+        // `!`-negation is a gitignore feature globset couldn't express.
+        let from = TmpDir::new("neg-from");
+        let to = TmpDir::new("neg-to");
+        from.write("a.env", "A=1");
+        from.write("secret.env", "S=1");
+
+        let include = s(&["*.env", "!secret.env"]);
+        let copied = copy_files(&from.path, &to.path, &include, &[], false).unwrap();
+
+        assert_eq!(copied, vec![PathBuf::from("a.env")]);
+        assert!(to.path.join("a.env").exists());
+        assert!(!to.path.join("secret.env").exists());
+    }
+
+    #[test]
+    fn gitignore_leading_slash_anchors_to_root() {
+        let from = TmpDir::new("anchor-from");
+        let to = TmpDir::new("anchor-to");
+        from.write("config.yml", "root");
+        from.write("sub/config.yml", "nested");
+
+        // Anchored: only the root-level file, not the nested one.
+        let copied = copy_files(&from.path, &to.path, &s(&["/config.yml"]), &[], false).unwrap();
+
+        assert_eq!(copied, vec![PathBuf::from("config.yml")]);
+        assert!(!to.path.join("sub/config.yml").exists());
+    }
+
+    #[test]
+    fn gitignore_directory_pattern_includes_contents() {
+        let from = TmpDir::new("dirpat-from");
+        let to = TmpDir::new("dirpat-to");
+        from.write("config/app.json", "{}");
+        from.write("config/nested/db.json", "{}");
+        from.write("other.txt", "x");
+
+        // A trailing-slash directory pattern pulls in everything beneath it.
+        let copied = copy_files(&from.path, &to.path, &s(&["config/"]), &[], false).unwrap();
+
+        assert_eq!(
+            copied,
+            vec![
+                PathBuf::from("config/app.json"),
+                PathBuf::from("config/nested/db.json"),
+            ]
+        );
+        assert!(!to.path.join("other.txt").exists());
     }
 
     #[test]
