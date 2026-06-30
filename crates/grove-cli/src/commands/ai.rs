@@ -11,12 +11,12 @@ use crate::launch;
 #[derive(Debug, Clone, Bpaf)]
 #[bpaf(command, fallback_to_usage)]
 pub struct Ai {
-    /// Branch or folder name of the worktree
-    #[bpaf(positional("NAME"))]
-    name: String,
     /// AI tool adapter to use (overrides grove.ai.default)
     #[bpaf(long("ai"), argument("NAME"))]
     tool: Option<String>,
+    /// Branch or folder name of the worktree
+    #[bpaf(positional("NAME"), complete(crate::complete::worktree_names))]
+    name: String,
     /// Extra arguments passed through to the AI tool
     #[bpaf(any("ARG", Some), many)]
     extra: Vec<String>,

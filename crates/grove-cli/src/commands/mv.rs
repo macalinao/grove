@@ -16,7 +16,7 @@ pub struct Mv {
     #[bpaf(short('y'), long, switch)]
     yes: bool,
     /// Current branch or folder name
-    #[bpaf(positional("OLD"))]
+    #[bpaf(positional("OLD"), complete(crate::complete::worktree_names))]
     old: String,
     /// New name (branch + folder)
     #[bpaf(positional("NEW"))]

@@ -17,15 +17,42 @@ fn adapter_lists_editors_and_ai_tools() {
 #[test]
 fn completion_emits_setup_for_each_shell() {
     let r = TestRepo::new();
-    assert!(ok(&r.grove(&["completion", "bash"])).contains("COMPLETE=bash"));
-    assert!(ok(&r.grove(&["completion", "zsh"])).contains("COMPLETE=zsh"));
-    assert!(ok(&r.grove(&["completion", "fish"])).contains("COMPLETE=fish"));
+    assert!(
+        ok(&r.grove(&["completion", "bash"])).contains("--bpaf-complete-style-bash"),
+        "bash setup must wire bpaf's dynamic completion"
+    );
+    assert!(ok(&r.grove(&["completion", "zsh"])).contains("--bpaf-complete-style-zsh"));
+    assert!(ok(&r.grove(&["completion", "fish"])).contains("--bpaf-complete-style-fish"));
 }
 
 #[test]
 fn completion_rejects_unknown_shell() {
     let r = TestRepo::new();
     failed(&r.grove(&["completion", "tcsh"]));
+}
+
+#[test]
+fn git_grove_binary_behaves_like_grove() {
+    let r = TestRepo::new();
+    ok(&r.grove(&["new", "feature", "--no-fetch"]));
+    // The `git-grove` shim shares grove's parser and repo discovery.
+    let out = r.git_grove(&["list"]);
+    assert!(out.status.success(), "git-grove list failed");
+    assert!(stdout(&out).contains("feature"), "list: {}", stdout(&out));
+}
+
+#[test]
+fn git_grove_dispatches_as_git_subcommand() {
+    let r = TestRepo::new();
+    // Expose `git-grove` on PATH so real `git grove …` resolves to it.
+    let shim = r.bin.join("git-grove");
+    std::os::unix::fs::symlink(env!("CARGO_BIN_EXE_git-grove"), &shim).unwrap();
+    let out = r.tool("git", &["grove", "version"]);
+    assert!(
+        out.status.success(),
+        "git grove version: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
 }
 
 #[test]

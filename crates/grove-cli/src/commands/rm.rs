@@ -19,7 +19,11 @@ pub struct Rm {
     #[bpaf(short('y'), long, switch)]
     yes: bool,
     /// Branch or folder name(s) of the worktree(s) to remove
-    #[bpaf(positional("NAME"), some("expected at least one worktree name"))]
+    #[bpaf(
+        positional("NAME"),
+        complete(crate::complete::worktree_names),
+        some("expected at least one worktree name")
+    )]
     names: Vec<String>,
 }
 

@@ -7,7 +7,7 @@ use grove_core::Grove;
 #[bpaf(command, fallback_to_usage)]
 pub struct Go {
     /// Branch or folder name of the worktree
-    #[bpaf(positional("NAME"))]
+    #[bpaf(positional("NAME"), complete(crate::complete::worktree_names))]
     name: String,
 }
 

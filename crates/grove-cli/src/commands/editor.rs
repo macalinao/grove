@@ -12,12 +12,12 @@ use crate::launch;
 #[derive(Debug, Clone, Bpaf)]
 #[bpaf(command, fallback_to_usage)]
 pub struct Editor {
-    /// Branch or folder name of the worktree
-    #[bpaf(positional("NAME"))]
-    name: String,
     /// Editor adapter to use (overrides grove.editor.default)
     #[bpaf(long("editor"), argument("NAME"))]
     editor: Option<String>,
+    /// Branch or folder name of the worktree
+    #[bpaf(positional("NAME"), complete(crate::complete::worktree_names))]
+    name: String,
 }
 
 pub fn execute(args: Editor) -> Result<()> {

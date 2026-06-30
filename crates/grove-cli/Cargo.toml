@@ -11,9 +11,19 @@ rust-version.workspace = true
 [lints]
 workspace = true
 
+[lib]
+name = "grove_cli"
+path = "src/lib.rs"
+
 [[bin]]
 name = "grove"
 path = "src/main.rs"
+
+# Installed alongside `grove` so `git grove …` works as a git subcommand
+# (git runs the `git-grove` executable it finds on PATH).
+[[bin]]
+name = "git-grove"
+path = "src/bin/git-grove.rs"
 
 [dependencies]
 anyhow.workspace = true

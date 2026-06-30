@@ -12,7 +12,7 @@ use grove_core::Grove;
 #[bpaf(command, fallback_to_usage)]
 pub struct Run {
     /// Branch or folder name of the worktree
-    #[bpaf(positional("NAME"))]
+    #[bpaf(positional("NAME"), complete(crate::complete::worktree_names))]
     name: String,
     /// Command and arguments to run inside the worktree
     #[bpaf(any("COMMAND", Some), many)]

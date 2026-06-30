@@ -6,12 +6,12 @@ use grove_shell::Shell;
 #[derive(Debug, Clone, Bpaf)]
 #[bpaf(command, fallback_to_usage)]
 pub struct Init {
-    /// Shell to emit integration for: bash, zsh, or fish
-    #[bpaf(positional("SHELL"))]
-    shell: String,
     /// Name for the emitted shell function (default: grove)
     #[bpaf(long("as"), argument("NAME"), fallback("grove".to_string()))]
     name: String,
+    /// Shell to emit integration for: bash, zsh, or fish
+    #[bpaf(positional("SHELL"))]
+    shell: String,
 }
 
 pub fn execute(args: &Init) -> Result<()> {

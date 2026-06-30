@@ -71,6 +71,14 @@ impl TestRepo {
             .unwrap()
     }
 
+    /// Run the `git-grove` binary directly (the shim that powers `git grove …`).
+    pub fn git_grove(&self, args: &[&str]) -> Output {
+        self.base_cmd(env!("CARGO_BIN_EXE_git-grove"), &self.root)
+            .args(args)
+            .output()
+            .unwrap()
+    }
+
     /// Run `grove <args>` with extra env vars and the fake-bin dir on `PATH`.
     pub fn grove_env(&self, args: &[&str], envs: &[(&str, &str)]) -> Output {
         let mut cmd = self.base_cmd(env!("CARGO_BIN_EXE_grove"), &self.root);
