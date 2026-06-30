@@ -69,7 +69,7 @@ pub fn apply_gtr_gitconfig(cfg: &mut Config, repo: &Repo) {
 }
 
 /// Read a real `.gtrconfig` file using gtr's on-disk key schema.
-fn apply_gtrconfig(cfg: &mut Config, path: &Path) {
+pub(crate) fn apply_gtrconfig(cfg: &mut Config, path: &Path) {
     if !path.exists() {
         return;
     }

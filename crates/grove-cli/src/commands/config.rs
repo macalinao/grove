@@ -1,7 +1,7 @@
 use anyhow::{Result, anyhow};
 use bpaf::Bpaf;
 use console::style;
-use grove_core::{ConfigScope, Grove};
+use grove_core::{Config as GroveConfig, ConfigScope, Grove};
 
 /// Get, set, add, list, or unset `grove.*` configuration.
 #[derive(Debug, Clone, Bpaf)]
@@ -54,6 +54,16 @@ pub enum ConfigAction {
     /// List all grove.* config values
     #[bpaf(command)]
     List,
+    /// Convert a .gtrconfig file into a native grove.kdl
+    #[bpaf(command)]
+    Migrate {
+        /// Overwrite an existing grove.kdl
+        #[bpaf(long, switch)]
+        force: bool,
+        /// Print the generated grove.kdl instead of writing it
+        #[bpaf(long, switch)]
+        dry_run: bool,
+    },
 }
 
 pub fn execute(args: &Config) -> Result<()> {
@@ -65,6 +75,7 @@ pub fn execute(args: &Config) -> Result<()> {
         ConfigAction::Add { key, value } => add(&grove, key, value, scope),
         ConfigAction::Unset { key } => unset(&grove, key, scope),
         ConfigAction::List => list(&grove),
+        ConfigAction::Migrate { force, dry_run } => migrate(&grove, *force, *dry_run),
     }
 }
 
@@ -115,6 +126,45 @@ fn list(grove: &Grove) -> Result<()> {
     for (key, value) in grove.repo.config_list_grove()? {
         println!("{key} = {value}");
     }
+    Ok(())
+}
+
+/// Translate the repo's `.gtrconfig` into a native `grove.kdl`.
+fn migrate(grove: &Grove, force: bool, dry_run: bool) -> Result<()> {
+    let root = grove.root();
+    let src = root.join(".gtrconfig");
+    if !src.exists() {
+        return Err(anyhow!("no .gtrconfig found at {}", src.display()));
+    }
+
+    let kdl = GroveConfig::from_gtrconfig(&src).to_kdl();
+    if kdl.trim().is_empty() {
+        return Err(anyhow!(
+            "{} has no recognized settings to migrate",
+            src.display()
+        ));
+    }
+
+    if dry_run {
+        print!("{kdl}");
+        return Ok(());
+    }
+
+    let dest = root.join("grove.kdl");
+    if dest.exists() && !force {
+        return Err(anyhow!(
+            "{} already exists; pass --force to overwrite",
+            dest.display()
+        ));
+    }
+
+    std::fs::write(&dest, &kdl)?;
+    eprintln!(
+        "{} migrated {} → {}",
+        style("✓").green(),
+        src.display(),
+        dest.display()
+    );
     Ok(())
 }
 

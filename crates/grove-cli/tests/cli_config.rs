@@ -95,3 +95,81 @@ fn rejects_multiple_scopes() {
     let r = TestRepo::new();
     failed(&r.grove(&["config", "--global", "--system", "set", "grove.x.y", "z"]));
 }
+
+/// A `.gtrconfig` in gtr's on-disk schema, exercising scalars, list-valued
+/// `copy.*`, and multi-valued `hooks.*`.
+const SAMPLE_GTRCONFIG: &str = "\
+[worktrees]
+\tdir = ../wt
+\tprefix = wt-
+[defaults]
+\teditor = cursor
+\tai = claude
+\tbranch = main
+[copy]
+\tinclude = *.env
+\tinclude = .env.local
+[hooks]
+\tpostCreate = pnpm install
+\tpostCreate = echo done
+";
+
+#[test]
+fn migrate_writes_grove_kdl_from_gtrconfig() {
+    let r = TestRepo::new();
+    r.write(".gtrconfig", SAMPLE_GTRCONFIG);
+
+    ok(&r.grove(&["config", "migrate"]));
+
+    let kdl = std::fs::read_to_string(r.path("grove.kdl")).unwrap();
+    assert!(kdl.contains("worktrees {"), "kdl: {kdl}");
+    assert!(kdl.contains("dir \"../wt\""), "kdl: {kdl}");
+    assert!(kdl.contains("default \"cursor\""), "kdl: {kdl}");
+    // List values collapse onto one node; multi-valued hooks stay separate.
+    assert!(
+        kdl.contains("include \"*.env\" \".env.local\""),
+        "kdl: {kdl}"
+    );
+    assert!(kdl.contains("postCreate \"pnpm install\""), "kdl: {kdl}");
+    assert!(kdl.contains("postCreate \"echo done\""), "kdl: {kdl}");
+}
+
+#[test]
+fn migrate_dry_run_prints_without_writing() {
+    let r = TestRepo::new();
+    r.write(".gtrconfig", SAMPLE_GTRCONFIG);
+
+    let out = ok(&r.grove(&["config", "migrate", "--dry-run"]));
+    assert!(out.contains("worktrees {"), "stdout: {out}");
+    assert!(
+        !r.path("grove.kdl").exists(),
+        "grove.kdl must not be written"
+    );
+}
+
+#[test]
+fn migrate_refuses_to_clobber_without_force() {
+    let r = TestRepo::new();
+    r.write(".gtrconfig", SAMPLE_GTRCONFIG);
+    r.write("grove.kdl", "// hand-written\n");
+
+    failed(&r.grove(&["config", "migrate"]));
+    // The existing file is untouched…
+    assert_eq!(
+        std::fs::read_to_string(r.path("grove.kdl")).unwrap(),
+        "// hand-written\n"
+    );
+    // …until --force.
+    ok(&r.grove(&["config", "migrate", "--force"]));
+    assert!(
+        std::fs::read_to_string(r.path("grove.kdl"))
+            .unwrap()
+            .contains("worktrees {")
+    );
+}
+
+#[test]
+fn migrate_errors_when_no_gtrconfig() {
+    let r = TestRepo::new();
+    failed(&r.grove(&["config", "migrate"]));
+}
