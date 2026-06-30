@@ -401,7 +401,7 @@ fn kdl_quote(s: &str) -> String {
 /// Push a single-valued `name "value"` child line when `value` is set.
 fn push_scalar(lines: &mut Vec<String>, name: &str, value: Option<&str>) {
     if let Some(v) = value {
-        lines.push(format!("    {name} {}", kdl_quote(v)));
+        lines.push(format!("  {name} {}", kdl_quote(v)));
     }
 }
 
@@ -415,14 +415,14 @@ fn push_list(lines: &mut Vec<String>, name: &str, values: &[String]) {
         .map(|v| kdl_quote(v))
         .collect::<Vec<_>>()
         .join(" ");
-    lines.push(format!("    {name} {args}"));
+    lines.push(format!("  {name} {args}"));
 }
 
 /// Push one `name "value"` child line per hook command, keeping each on its own
 /// node so commands with spaces stay readable.
 fn push_hook(lines: &mut Vec<String>, name: &str, values: &[String]) {
     for v in values {
-        lines.push(format!("    {name} {}", kdl_quote(v)));
+        lines.push(format!("  {name} {}", kdl_quote(v)));
     }
 }
 
