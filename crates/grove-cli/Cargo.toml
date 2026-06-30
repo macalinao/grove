@@ -30,7 +30,11 @@ anyhow.workspace = true
 bpaf.workspace = true
 console.workspace = true
 kdl.workspace = true
+shlex.workspace = true
 grove-adapters.workspace = true
 grove-core.workspace = true
 grove-tasks.workspace = true
 grove-shell.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

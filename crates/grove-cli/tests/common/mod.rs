@@ -10,8 +10,12 @@
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
+use tempfile::TempDir;
+
 /// A temp git repository plus helpers to run `grove` against it.
 pub struct TestRepo {
+    /// Owns the temp tree; deleted (even on panic) when the `TestRepo` drops.
+    _tmp: TempDir,
     /// Canonical temp workspace dir; the repo and its `-worktrees` sibling live here.
     pub workspace: PathBuf,
     /// Canonical path to the repo (`workspace/repo`).
@@ -25,17 +29,13 @@ pub struct TestRepo {
 impl TestRepo {
     /// Create a fresh repo on `main` with one empty commit.
     pub fn new() -> TestRepo {
-        let nonce = format!(
-            "{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        );
-        let workspace = std::env::temp_dir().join(format!("grove-it-{nonce}"));
-        std::fs::create_dir_all(&workspace).unwrap();
-        let workspace = workspace.canonicalize().unwrap();
+        let tmp = tempfile::Builder::new()
+            .prefix("grove-it-")
+            .tempdir()
+            .unwrap();
+        // Canonicalize so paths compare equal to what git/grove report (macOS
+        // routes the temp dir through a `/var → /private/var` symlink).
+        let workspace = tmp.path().canonicalize().unwrap();
         let root = workspace.join("repo");
         std::fs::create_dir_all(&root).unwrap();
         let bin = workspace.join("bin");
@@ -48,6 +48,7 @@ impl TestRepo {
         .unwrap();
 
         let repo = TestRepo {
+            _tmp: tmp,
             workspace,
             root,
             global_cfg,
@@ -210,12 +211,6 @@ impl TestRepo {
             .env_remove("GROVE_COLOR")
             .env_remove("NO_COLOR");
         cmd
-    }
-}
-
-impl Drop for TestRepo {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.workspace);
     }
 }
 

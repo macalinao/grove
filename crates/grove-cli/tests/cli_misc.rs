@@ -112,6 +112,38 @@ fn custom_editor_adapter_from_config_receives_worktree_path() {
 }
 
 #[test]
+fn custom_adapter_command_splits_shell_words() {
+    let r = TestRepo::new();
+    ok(&r.grove(&["new", "feature", "--no-fetch", "--no-copy"]));
+    // Records each argument it receives on its own line.
+    r.write_exec(
+        "myeditor",
+        "#!/bin/sh\nfor a in \"$@\"; do printf '%s\\n' \"$a\"; done > \"$GROVE_TEST_MARK\"\n",
+    );
+    // Flags plus a quoted, multi-word argument: whitespace splitting would
+    // mangle these, shell-word splitting keeps them intact.
+    r.set_config("grove.editor.myed.command", "myeditor --wait -a 'My App'");
+    let mark = r.path("EDITOR_ARGS");
+    let out = r.grove_env(
+        &["editor", "feature", "--editor", "myed"],
+        &[("GROVE_TEST_MARK", &mark.to_string_lossy())],
+    );
+    assert!(out.status.success(), "stderr: {}", common::stderr(&out));
+    let recorded = std::fs::read_to_string(&mark).unwrap();
+    let args: Vec<&str> = recorded.lines().collect();
+    assert_eq!(
+        args,
+        vec![
+            "--wait",
+            "-a",
+            "My App",
+            &*r.wt("feature").to_string_lossy(),
+        ],
+        "recorded: {recorded}"
+    );
+}
+
+#[test]
 fn custom_ai_adapter_runs_in_worktree_cwd() {
     let r = TestRepo::new();
     ok(&r.grove(&["new", "feature", "--no-fetch", "--no-copy"]));

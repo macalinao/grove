@@ -16,3 +16,6 @@ thiserror.workspace = true
 kdl.workspace = true
 sha2.workspace = true
 grove-git.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

@@ -32,6 +32,10 @@ globset = "0.4"
 kdl = "6"
 reflink-copy = "0.1"
 sha2 = "0.10"
+shlex = "1"
+
+# Dev-only
+tempfile = "3"
 
 [profile.release]
 lto = "thin"

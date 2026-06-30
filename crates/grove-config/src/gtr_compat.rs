@@ -180,11 +180,14 @@ mod tests {
     use super::*;
     use std::process::Command;
 
-    fn temp_dir(tag: &str) -> std::path::PathBuf {
-        let dir = std::env::temp_dir().join(format!("grove-gtr-{tag}-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
-        dir
+    use tempfile::TempDir;
+
+    /// A throwaway dir that deletes itself (even on panic) when dropped.
+    fn temp_dir() -> TempDir {
+        tempfile::Builder::new()
+            .prefix("grove-gtr-")
+            .tempdir()
+            .unwrap()
     }
 
     fn write_key(file: &Path, key: &str, value: &str) {
@@ -204,7 +207,8 @@ mod tests {
     #[test]
     fn reads_real_gtrconfig_schema() {
         // The keys a real gtr-written .gtrconfig uses (unprefixed, INI sections).
-        let dir = temp_dir("gtr");
+        let dir = temp_dir();
+        let dir = dir.path();
         let file = dir.join(".gtrconfig");
         write_key(&file, "worktrees.dir", "../wt");
         write_key(&file, "worktrees.prefix", "wt-");
@@ -220,7 +224,7 @@ mod tests {
         add_key(&file, "hooks.postCreate", "bun install");
 
         let mut cfg = Config::default();
-        apply(&mut cfg, &dir);
+        apply(&mut cfg, dir);
         assert_eq!(cfg.worktrees_dir.as_deref(), Some("../wt"));
         assert_eq!(cfg.worktrees_prefix, "wt-");
         assert_eq!(cfg.editor_default.as_deref(), Some("cursor"));
@@ -233,32 +237,28 @@ mod tests {
         assert_eq!(cfg.copy_include, vec![".env"]);
         assert_eq!(cfg.copy_include_dirs, vec!["node_modules"]);
         assert_eq!(cfg.hook_post_create, vec!["bun install"]);
-
-        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
     fn groveconfig_overrides_gtrconfig() {
-        let dir = temp_dir("grove");
+        let dir = temp_dir();
+        let dir = dir.path();
         write_key(&dir.join(".gtrconfig"), "defaults.editor", "cursor");
         write_key(&dir.join(".groveconfig"), "grove.editor.default", "zed");
 
         let mut cfg = Config::default();
-        apply(&mut cfg, &dir);
+        apply(&mut cfg, dir);
         // .groveconfig is applied second, so it wins.
         assert_eq!(cfg.editor_default.as_deref(), Some("zed"));
-
-        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
     fn missing_files_are_noop() {
-        let dir = temp_dir("none");
+        let dir = temp_dir();
         let mut cfg = Config::default();
-        apply(&mut cfg, &dir);
+        apply(&mut cfg, dir.path());
         assert!(cfg.worktrees_dir.is_none());
         assert!(cfg.editor_default.is_none());
         assert_eq!(cfg.color, ColorChoice::Auto);
-        let _ = std::fs::remove_dir_all(&dir);
     }
 }

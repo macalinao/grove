@@ -113,13 +113,18 @@ fn ai_command_argv(grove: &Grove, name: &str) -> Result<Vec<String>> {
 }
 
 /// Read a user-defined adapter command from `grove.<kind>.<name>.command` and
-/// split it into argv on whitespace.
+/// split it into argv with shell-word quoting (so `editor = "code --wait"` or
+/// `"open -a 'My App'"` split correctly).
 fn custom_argv(grove: &Grove, kind: &str, name: &str) -> Result<Option<Vec<String>>> {
     let key = format!("grove.{kind}.{name}.command");
-    Ok(grove.repo.config_get(&key)?.and_then(|cmd| {
-        let argv: Vec<String> = cmd.split_whitespace().map(str::to_string).collect();
-        (!argv.is_empty()).then_some(argv)
-    }))
+    let Some(cmd) = grove.repo.config_get(&key)? else {
+        return Ok(None);
+    };
+    match shlex::split(&cmd) {
+        Some(argv) if !argv.is_empty() => Ok(Some(argv)),
+        Some(_) => Ok(None),
+        None => Err(anyhow!("{key} is not a valid command line: {cmd:?}")),
+    }
 }
 
 /// Resolve a `*.code-workspace` file for `path`, honoring `grove.editor.workspace`
