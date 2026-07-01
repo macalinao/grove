@@ -1,15 +1,21 @@
 use anyhow::{Result, anyhow};
 use bpaf::Bpaf;
 use console::style;
-use grove_core::Grove;
+use grove_core::{Config as GroveConfig, ConfigScope, Grove};
 
-/// Get, set, list, or unset `grove.*` configuration.
+/// Get, set, add, list, or unset `grove.*` configuration.
 #[derive(Debug, Clone, Bpaf)]
 #[bpaf(command, fallback_to_usage)]
 pub struct Config {
-    /// Operate on global (~/.gitconfig) config instead of this repo
+    /// Write to / read from the global (~/.gitconfig) scope
     #[bpaf(long, switch)]
     global: bool,
+    /// Write to / read from the local (.git/config) scope (default)
+    #[bpaf(long, switch)]
+    local: bool,
+    /// Read from the system (/etc/gitconfig) scope
+    #[bpaf(long, switch)]
+    system: bool,
     #[bpaf(external(config_action))]
     action: ConfigAction,
 }
@@ -23,9 +29,17 @@ pub enum ConfigAction {
         #[bpaf(positional("KEY"))]
         key: String,
     },
-    /// Set a config value
+    /// Set a config value (replacing any existing value)
     #[bpaf(command)]
     Set {
+        #[bpaf(positional("KEY"))]
+        key: String,
+        #[bpaf(positional("VALUE"))]
+        value: String,
+    },
+    /// Append a value to a multi-valued key
+    #[bpaf(command)]
+    Add {
         #[bpaf(positional("KEY"))]
         key: String,
         #[bpaf(positional("VALUE"))]
@@ -40,15 +54,39 @@ pub enum ConfigAction {
     /// List all grove.* config values
     #[bpaf(command)]
     List,
+    /// Convert a .gtrconfig file into a native grove.kdl
+    #[bpaf(command)]
+    Migrate {
+        /// Overwrite an existing grove.kdl
+        #[bpaf(long, switch)]
+        force: bool,
+        /// Print the generated grove.kdl instead of writing it
+        #[bpaf(long, switch)]
+        dry_run: bool,
+    },
 }
 
 pub fn execute(args: &Config) -> Result<()> {
+    let scope = resolve_scope(args)?;
     let grove = Grove::open()?;
     match &args.action {
         ConfigAction::Get { key } => get(&grove, key),
-        ConfigAction::Set { key, value } => set(&grove, key, value, args.global),
-        ConfigAction::Unset { key } => unset(&grove, key, args.global),
+        ConfigAction::Set { key, value } => set(&grove, key, value, scope),
+        ConfigAction::Add { key, value } => add(&grove, key, value, scope),
+        ConfigAction::Unset { key } => unset(&grove, key, scope),
         ConfigAction::List => list(&grove),
+        ConfigAction::Migrate { force, dry_run } => migrate(&grove, *force, *dry_run),
+    }
+}
+
+/// Map the `--local/--global/--system` switches to a single scope, rejecting
+/// mutually exclusive combinations.
+fn resolve_scope(args: &Config) -> Result<ConfigScope> {
+    match (args.local, args.global, args.system) {
+        (false, false, false) | (true, false, false) => Ok(ConfigScope::Local),
+        (false, true, false) => Ok(ConfigScope::Global),
+        (false, false, true) => Ok(ConfigScope::System),
+        _ => Err(anyhow!("choose at most one of --local, --global, --system")),
     }
 }
 
@@ -63,16 +101,23 @@ fn get(grove: &Grove, key: &str) -> Result<()> {
     }
 }
 
-fn set(grove: &Grove, key: &str, value: &str, global: bool) -> Result<()> {
+fn set(grove: &Grove, key: &str, value: &str, scope: ConfigScope) -> Result<()> {
     let key = qualify(key);
-    grove.repo.config_set(&key, value, global)?;
+    grove.repo.config_set(&key, value, scope)?;
     eprintln!("{} {key} = {value}", style("✓").green());
     Ok(())
 }
 
-fn unset(grove: &Grove, key: &str, global: bool) -> Result<()> {
+fn add(grove: &Grove, key: &str, value: &str, scope: ConfigScope) -> Result<()> {
     let key = qualify(key);
-    grove.repo.config_unset(&key, global)?;
+    grove.repo.config_add(&key, value, scope)?;
+    eprintln!("{} {key} += {value}", style("✓").green());
+    Ok(())
+}
+
+fn unset(grove: &Grove, key: &str, scope: ConfigScope) -> Result<()> {
+    let key = qualify(key);
+    grove.repo.config_unset(&key, scope)?;
     eprintln!("{} unset {key}", style("✓").green());
     Ok(())
 }
@@ -81,6 +126,45 @@ fn list(grove: &Grove) -> Result<()> {
     for (key, value) in grove.repo.config_list_grove()? {
         println!("{key} = {value}");
     }
+    Ok(())
+}
+
+/// Translate the repo's `.gtrconfig` into a native `grove.kdl`.
+fn migrate(grove: &Grove, force: bool, dry_run: bool) -> Result<()> {
+    let root = grove.root();
+    let src = root.join(".gtrconfig");
+    if !src.exists() {
+        return Err(anyhow!("no .gtrconfig found at {}", src.display()));
+    }
+
+    let kdl = GroveConfig::from_gtrconfig(&src).to_kdl();
+    if kdl.trim().is_empty() {
+        return Err(anyhow!(
+            "{} has no recognized settings to migrate",
+            src.display()
+        ));
+    }
+
+    if dry_run {
+        print!("{kdl}");
+        return Ok(());
+    }
+
+    let dest = root.join("grove.kdl");
+    if dest.exists() && !force {
+        return Err(anyhow!(
+            "{} already exists; pass --force to overwrite",
+            dest.display()
+        ));
+    }
+
+    std::fs::write(&dest, &kdl)?;
+    eprintln!(
+        "{} migrated {} → {}",
+        style("✓").green(),
+        src.display(),
+        dest.display()
+    );
     Ok(())
 }
 

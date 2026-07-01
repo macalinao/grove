@@ -13,6 +13,11 @@ workspace = true
 
 [dependencies]
 thiserror.workspace = true
-globset.workspace = true
+ignore.workspace = true
+reflink-copy.workspace = true
 grove-git.workspace = true
 grove-config.workspace = true
+grove-forge.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

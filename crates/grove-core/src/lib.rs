@@ -7,12 +7,18 @@
 
 use std::path::{Path, PathBuf};
 
-pub use grove_config::{Config, ConfigError, TrustStatus, is_trusted, record_trust, trust_status};
-pub use grove_git::{GitError, Repo, Worktree};
+pub use grove_config::{
+    Config, ConfigError, TrackMode, TrustStatus, is_trusted, record_trust, trust_status,
+};
+pub use grove_forge::{CliForge, Forge, ForgeError, PrInfo, PrState, Provider};
+pub use grove_git::{ConfigScope, GitError, Repo, Worktree};
 
 pub mod copy;
 
-pub use copy::copy_files;
+pub use copy::{
+    CopySpec, ReflinkSupport, copy_dirs, copy_files, copy_into, read_worktreeinclude,
+    reflink_support,
+};
 
 /// Errors from worktree lifecycle operations.
 #[derive(thiserror::Error, Debug)]
@@ -26,6 +32,9 @@ pub enum CoreError {
     #[error("no worktree matching '{0}'")]
     NotFound(String),
 
+    #[error("--track: {0}")]
+    Track(String),
+
     #[error("destination already exists: {0}")]
     DestExists(PathBuf),
 
@@ -35,10 +44,10 @@ pub enum CoreError {
         source: std::io::Error,
     },
 
-    #[error("invalid glob pattern '{pattern}': {source}")]
+    #[error("invalid copy pattern '{pattern}': {source}")]
     Glob {
         pattern: String,
-        source: globset::Error,
+        source: ignore::Error,
     },
 }
 
@@ -53,16 +62,42 @@ pub struct Grove {
 }
 
 /// Options for [`Grove::create`].
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct CreateOpts {
     /// Branch to create/check out. Defaults to the worktree `name`.
     pub branch: Option<String>,
     /// Start point when creating a new branch (`--from`).
     pub base: Option<String>,
+    /// Base the new branch on the current HEAD (`--from-current`).
+    pub from_current: bool,
     /// Override the folder name (`--folder`). Defaults to the sanitized branch.
     pub folder: Option<String>,
+    /// Folder-name suffix appended to the sanitized branch (`--name`).
+    pub name: Option<String>,
     /// Allow checking out a branch already used by another worktree.
     pub force: bool,
+    /// Fetch the remote before creating (so base refs are current).
+    pub fetch: bool,
+    /// Override the remote used for base refs and tracking (`--remote`).
+    pub remote: Option<String>,
+    /// Upstream tracking mode for a newly created branch.
+    pub track: TrackMode,
+}
+
+impl Default for CreateOpts {
+    fn default() -> Self {
+        CreateOpts {
+            branch: None,
+            base: None,
+            from_current: false,
+            folder: None,
+            name: None,
+            force: false,
+            fetch: true,
+            remote: None,
+            track: TrackMode::Auto,
+        }
+    }
 }
 
 /// Options for [`Grove::remove`].
@@ -107,12 +142,49 @@ impl Grove {
     /// The on-disk path a worktree for `branch` would occupy.
     #[must_use]
     pub fn folder_for(&self, branch: &str) -> PathBuf {
-        let folder = format!("{}{}", self.config.worktrees_prefix, sanitize(branch));
+        self.folder_named(&sanitize(branch))
+    }
+
+    /// The on-disk path for an already-sanitized folder name (with prefix).
+    #[must_use]
+    fn folder_named(&self, name: &str) -> PathBuf {
+        let folder = format!("{}{}", self.config.worktrees_prefix, name);
         self.worktrees_dir().join(folder)
     }
 
+    /// Build a forge client for the configured remote, detecting the provider
+    /// from its URL (overridable via `grove.provider`).
+    ///
+    /// Returns `None` when the remote has no URL or its host isn't a known
+    /// provider and none is configured.
+    pub fn forge(&self) -> Result<Option<CliForge>> {
+        let url = self.repo.remote_url(self.config.remote())?;
+        let provider = url
+            .as_deref()
+            .and_then(|u| grove_forge::detect(u, self.config.provider.as_deref()));
+        Ok(provider.map(|p| CliForge::new(p, &self.root)))
+    }
+
+    /// Build the copy specification from config plus a `.worktreeinclude` file
+    /// at the main worktree root (its globs merge into the file includes).
+    pub fn copy_spec(&self) -> Result<CopySpec> {
+        let mut include = self.config.copy_include.clone();
+        include.extend(read_worktreeinclude(&self.root)?);
+        Ok(CopySpec {
+            include,
+            exclude: self.config.copy_exclude.clone(),
+            include_dirs: self.config.copy_include_dirs.clone(),
+            exclude_dirs: self.config.copy_exclude_dirs.clone(),
+        })
+    }
+
     /// Find an existing worktree by branch name or folder name.
+    ///
+    /// The special name `1` resolves to the main worktree (matching gtr).
     pub fn find(&self, name: &str) -> Result<Option<Worktree>> {
+        if name == "1" {
+            return Ok(self.list()?.into_iter().find(|w| w.path == self.root));
+        }
         let prefixed = format!("{}{}", self.config.worktrees_prefix, sanitize(name));
         Ok(self.list()?.into_iter().find(|w| {
             w.branch.as_deref() == Some(name)
@@ -131,10 +203,7 @@ impl Grove {
     /// Create a new worktree. Returns its path.
     pub fn create(&self, name: &str, opts: &CreateOpts) -> Result<PathBuf> {
         let branch = opts.branch.clone().unwrap_or_else(|| name.to_string());
-        let folder = opts.folder.as_ref().map_or_else(
-            || self.folder_for(&branch),
-            |f| self.worktrees_dir().join(f),
-        );
+        let folder = self.resolve_folder(&branch, opts);
 
         if folder.exists() {
             return Err(CoreError::DestExists(folder));
@@ -146,15 +215,110 @@ impl Grove {
             })?;
         }
 
-        let create_branch = !self.repo.branch_exists(&branch)?;
-        self.repo.add_worktree(
-            &folder,
-            &branch,
-            create_branch,
-            opts.base.as_deref(),
-            opts.force,
-        )?;
+        let remote = opts
+            .remote
+            .as_deref()
+            .unwrap_or_else(|| self.config.remote());
+        if opts.fetch {
+            // Best-effort: a missing remote or offline network shouldn't block
+            // creating a worktree from local refs.
+            let _ = self.repo.fetch(remote);
+        }
+
+        let (create_branch, base) = self.plan_branch(&branch, remote, opts)?;
+        self.repo
+            .add_worktree(&folder, &branch, create_branch, base.as_deref(), opts.force)?;
+        // Upstream tracking follows from the base ref: git auto-tracks when the
+        // start point is a remote-tracking branch (matching gtr, which likewise
+        // doesn't suppress it).
         Ok(folder)
+    }
+
+    /// Resolve the worktree folder path: explicit `--folder` wins; otherwise the
+    /// sanitized branch plus an optional `--name` suffix.
+    fn resolve_folder(&self, branch: &str, opts: &CreateOpts) -> PathBuf {
+        if let Some(folder) = &opts.folder {
+            return self.worktrees_dir().join(folder);
+        }
+        let mut name = sanitize(branch);
+        if let Some(suffix) = &opts.name {
+            name = format!("{name}-{suffix}");
+        }
+        self.folder_named(&name)
+    }
+
+    /// Decide whether to create a new branch and its start point, following
+    /// gtr's `--track` case structure (`auto`/`remote`/`local`/`none`).
+    ///
+    /// Returns `(create_branch, base)` for [`grove_git::Repo::add_worktree`].
+    fn plan_branch(
+        &self,
+        branch: &str,
+        remote: &str,
+        opts: &CreateOpts,
+    ) -> Result<(bool, Option<String>)> {
+        let local = self.repo.branch_exists(branch)?;
+        let remote_b = self.repo.remote_branch_exists(remote, branch)?;
+        let remote_ref = format!("{remote}/{branch}");
+
+        match opts.track {
+            TrackMode::Remote => {
+                if !remote_b {
+                    return Err(CoreError::Track(format!(
+                        "remote branch '{remote_ref}' does not exist"
+                    )));
+                }
+                Ok((true, Some(remote_ref)))
+            }
+            TrackMode::Local => {
+                if !local {
+                    return Err(CoreError::Track(format!(
+                        "local branch '{branch}' does not exist"
+                    )));
+                }
+                Ok((false, None))
+            }
+            // `none` ignores a same-named remote branch and branches off the
+            // resolved from-ref.
+            TrackMode::None if local => Ok((false, None)),
+            TrackMode::None => Ok((true, self.from_ref(remote, opts)?)),
+            // `auto`: track an existing remote branch, reuse an existing local
+            // branch, else create a new one from the from-ref.
+            TrackMode::Auto if remote_b && !local => Ok((true, Some(remote_ref))),
+            TrackMode::Auto if local => Ok((false, None)),
+            TrackMode::Auto => Ok((true, self.from_ref(remote, opts)?)),
+        }
+    }
+
+    /// The start point for a brand-new branch: `--from-current` HEAD, an explicit
+    /// `--from`, else the remote's default branch (or `None` → git uses HEAD).
+    fn from_ref(&self, remote: &str, opts: &CreateOpts) -> Result<Option<String>> {
+        if opts.from_current {
+            return Ok(self.repo.current_branch()?);
+        }
+        if let Some(base) = &opts.base {
+            return Ok(Some(base.clone()));
+        }
+        self.default_base(remote)
+    }
+
+    /// The default base ref — the remote's default branch tip — or `None` when
+    /// none resolves (e.g. a repo with no remote), so git falls back to HEAD.
+    fn default_base(&self, remote: &str) -> Result<Option<String>> {
+        if let Some(b) = &self.config.default_branch {
+            for cand in [format!("{remote}/{b}"), b.clone()] {
+                if self.repo.has_ref(&cand)? {
+                    return Ok(Some(cand));
+                }
+            }
+        }
+        if let Some(b) = self.repo.remote_head_branch(remote)? {
+            let cand = format!("{remote}/{b}");
+            if self.repo.has_ref(&cand)? {
+                return Ok(Some(cand));
+            }
+        }
+        Ok(None)
     }
 
     /// Remove a worktree (and optionally its branch).
@@ -188,9 +352,19 @@ impl Grove {
 }
 
 /// Make a branch name safe to use as a directory component.
+///
+/// Mirrors gtr's `sanitize_branch_name` exactly: the "problematic" characters
+/// `/ \ <space> : * ? " < > | #` become `-`, and leading/trailing hyphens are
+/// trimmed. Everything else (including `@`, `+`, `.`, `_`) is kept as-is, so a
+/// folder name matches what gtr would produce for the same branch.
 #[must_use]
 pub fn sanitize(branch: &str) -> String {
-    branch.replace('/', "-")
+    const PROBLEM: &[char] = &['/', '\\', ' ', ':', '*', '?', '"', '<', '>', '|', '#'];
+    let replaced: String = branch
+        .chars()
+        .map(|c| if PROBLEM.contains(&c) { '-' } else { c })
+        .collect();
+    replaced.trim_matches('-').to_string()
 }
 
 #[cfg(test)]
@@ -202,5 +376,15 @@ mod tests {
     fn sanitizes_slashes() {
         assert_eq!(sanitize("feat/x"), "feat-x");
         assert_eq!(sanitize("plain"), "plain");
+    }
+
+    #[test]
+    fn sanitizes_like_gtr() {
+        // Problematic chars -> '-'; '@' and '+' are kept; ends trimmed.
+        assert_eq!(sanitize("feature/JIRA-123_v1.2"), "feature-JIRA-123_v1.2");
+        assert_eq!(sanitize("fix#42"), "fix-42");
+        assert_eq!(sanitize("a b:c"), "a-b-c");
+        assert_eq!(sanitize("feat+a@b"), "feat+a@b");
+        assert_eq!(sanitize("/lead/trail/"), "lead-trail");
     }
 }

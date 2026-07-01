@@ -3,13 +3,15 @@ use std::path::{Path, PathBuf};
 use anyhow::{Result, bail};
 use bpaf::Bpaf;
 use console::style;
-use grove_core::{Grove, Worktree, copy_files};
+use grove_core::{CopySpec, Grove, Worktree, copy_into};
 
-/// Copy untracked config/env files from one worktree into others by glob.
+/// Copy untracked config/env files and directories from one worktree into
+/// others.
 ///
-/// Patterns come from `grove.kdl` (`copy { include ...; exclude ... }`) or git
-/// config (`grove.copy.include` / `grove.copy.exclude`). By default the source
-/// is the main worktree.
+/// Patterns come from `grove.kdl` (`copy { include; exclude; includeDirs;
+/// excludeDirs }`), git config (`grove.copy.*`), and a `.worktreeinclude` file.
+/// Directories are cloned copy-on-write where supported. The source defaults to
+/// the main worktree.
 #[derive(Debug, Clone, Bpaf)]
 #[bpaf(command, fallback_to_usage)]
 pub struct Copy {
@@ -36,18 +38,17 @@ pub fn execute(args: Copy) -> Result<()> {
         bail!("no target worktrees; pass worktree name(s) or --all");
     }
 
-    let include = &grove.config.copy_include;
-    let exclude = &grove.config.copy_exclude;
-    if include.is_empty() {
+    let spec = grove.copy_spec()?;
+    if spec.is_empty() {
         eprintln!(
-            "{} no copy patterns configured (set copy.include in grove.kdl or grove.copy.include)",
+            "{} no copy patterns configured (set copy.include/includeDirs in grove.kdl, grove.copy.*, or .worktreeinclude)",
             style("!").yellow()
         );
         return Ok(());
     }
 
     for target in &targets {
-        copy_into(&source, target, include, exclude, args.dry_run)?;
+        copy_one(&source, target, &spec, args.dry_run)?;
     }
     Ok(())
 }
@@ -77,15 +78,9 @@ fn target_paths(grove: &Grove, source: &Path, args: &Copy) -> Result<Vec<PathBuf
     Ok(paths)
 }
 
-/// Run the copy into a single `target`, reporting each file.
-fn copy_into(
-    source: &Path,
-    target: &Path,
-    include: &[String],
-    exclude: &[String],
-    dry_run: bool,
-) -> Result<()> {
-    let copied = copy_files(source, target, include, exclude, dry_run)?;
+/// Run the copy into a single `target`, reporting each item.
+fn copy_one(source: &Path, target: &Path, spec: &CopySpec, dry_run: bool) -> Result<()> {
+    let copied = copy_into(source, target, spec, dry_run)?;
     let verb = if dry_run { "would copy" } else { "copied" };
     println!("{} {}", style("→").cyan(), target.display());
     for rel in &copied {

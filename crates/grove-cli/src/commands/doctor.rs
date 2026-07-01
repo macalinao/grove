@@ -3,7 +3,7 @@ use std::process::Command;
 use anyhow::Result;
 use bpaf::Bpaf;
 use console::style;
-use grove_core::Grove;
+use grove_core::{Grove, ReflinkSupport, reflink_support};
 
 /// Diagnose the Grove environment.
 #[derive(Debug, Clone, Bpaf)]
@@ -42,6 +42,13 @@ pub fn execute() -> Result<()> {
             let ai = grove.config.ai_default.as_deref().unwrap_or("(unset)");
             println!("  default editor: {editor}");
             println!("  default ai: {ai}");
+            // Whether worktree directory copies will be cheap CoW clones.
+            let cow = match reflink_support(grove.root(), grove.root()) {
+                ReflinkSupport::Supported => "yes (copy-on-write clones)",
+                ReflinkSupport::NotSupported => "no (full copies)",
+                ReflinkSupport::Unknown => "unknown",
+            };
+            println!("  copy-on-write: {cow}");
         }
         Err(e) => {
             println!("{cross} not inside a git repository ({e})");

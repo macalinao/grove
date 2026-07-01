@@ -1,5 +1,8 @@
+pub mod adapter;
 pub mod ai;
 pub mod cd;
+pub mod clean;
+pub mod completion;
 pub mod config;
 pub mod copy;
 pub mod doctor;
@@ -9,6 +12,7 @@ pub mod init;
 pub mod list;
 pub mod mv;
 pub mod new;
+pub mod post_cd;
 pub mod rm;
 pub mod run;
 pub mod tasks;
@@ -64,11 +68,23 @@ pub enum Command {
     /// Remove worktree(s)
     Rm(#[bpaf(external(rm::rm))] rm::Rm),
 
+    /// Remove worktrees whose PRs are merged or closed
+    Clean(#[bpaf(external(clean::clean))] clean::Clean),
+
     /// Rename a worktree and its branch
     Mv(#[bpaf(external(mv::mv))] mv::Mv),
 
+    /// Emit postCd hooks for shell integration (internal)
+    PostCd(#[bpaf(external(post_cd::post_cd))] post_cd::PostCd),
+
     /// Print shell integration (eval it from your shell rc)
     Init(#[bpaf(external(init::init))] init::Init),
+
+    /// List available editor and AI adapters
+    Adapter(#[bpaf(external(adapter::adapter))] adapter::Adapter),
+
+    /// Print shell-completion setup
+    Completion(#[bpaf(external(completion::completion))] completion::Completion),
 
     /// Diagnose the Grove environment
     Doctor(#[bpaf(external(doctor::doctor))] doctor::Doctor),
@@ -91,8 +107,12 @@ pub fn execute(cmd: Command) -> Result<()> {
         Command::Config(args) => config::execute(&args),
         Command::Trust(args) => trust::execute(&args),
         Command::Rm(args) => rm::execute(&args),
+        Command::Clean(args) => clean::execute(&args),
         Command::Mv(args) => mv::execute(&args),
+        Command::PostCd(args) => post_cd::execute(&args),
         Command::Init(args) => init::execute(&args),
+        Command::Adapter(_) => adapter::execute(),
+        Command::Completion(args) => completion::execute(&args),
         Command::Doctor(_) => doctor::execute(),
         Command::Version(_) => version::execute(),
     }

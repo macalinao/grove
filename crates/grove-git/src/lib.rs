@@ -26,6 +26,8 @@ pub struct Worktree {
     pub bare: bool,
     pub detached: bool,
     pub locked: bool,
+    /// The worktree's directory is missing; git would prune it.
+    pub prunable: bool,
 }
 
 impl Worktree {
@@ -33,6 +35,30 @@ impl Worktree {
     #[must_use]
     pub fn folder_name(&self) -> Option<&str> {
         self.path.file_name().and_then(|s| s.to_str())
+    }
+}
+
+/// Which git-config file a write/read targets.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ConfigScope {
+    /// The repository's `.git/config` (git's default for writes).
+    #[default]
+    Local,
+    /// The user's `~/.gitconfig`.
+    Global,
+    /// The system-wide `/etc/gitconfig`.
+    System,
+}
+
+impl ConfigScope {
+    /// The git CLI flag for this scope (`Local` adds none, matching git's default).
+    #[must_use]
+    pub fn flag(self) -> Option<&'static str> {
+        match self {
+            ConfigScope::Local => None,
+            ConfigScope::Global => Some("--global"),
+            ConfigScope::System => Some("--system"),
+        }
     }
 }
 
@@ -128,32 +154,42 @@ impl Repo {
         }
     }
 
-    /// Set a git config value (`git config [--global] <key> <value>`).
+    /// Set a git config value (`git config [scope] <key> <value>`), replacing
+    /// any existing value(s).
     ///
     /// # Errors
     /// Returns an error if `git` cannot be spawned or the command fails.
-    pub fn config_set(&self, key: &str, value: &str, global: bool) -> Result<()> {
+    pub fn config_set(&self, key: &str, value: &str, scope: ConfigScope) -> Result<()> {
         let mut args: Vec<&str> = vec!["config"];
-        if global {
-            args.push("--global");
-        }
+        args.extend(scope.flag());
         args.extend_from_slice(&[key, value]);
         self.git(&args)?;
         Ok(())
     }
 
-    /// Unset a git config value (`git config [--global] --unset <key>`).
+    /// Add a value to a (possibly multi-valued) git config key
+    /// (`git config [scope] --add <key> <value>`).
+    ///
+    /// # Errors
+    /// Returns an error if `git` cannot be spawned or the command fails.
+    pub fn config_add(&self, key: &str, value: &str, scope: ConfigScope) -> Result<()> {
+        let mut args: Vec<&str> = vec!["config"];
+        args.extend(scope.flag());
+        args.extend_from_slice(&["--add", key, value]);
+        self.git(&args)?;
+        Ok(())
+    }
+
+    /// Unset a git config value (`git config [scope] --unset <key>`).
     ///
     /// A missing key (git exit code 5) is treated as a successful no-op.
     ///
     /// # Errors
     /// Returns an error if `git` cannot be spawned or the command fails for a
     /// reason other than the key being absent.
-    pub fn config_unset(&self, key: &str, global: bool) -> Result<()> {
+    pub fn config_unset(&self, key: &str, scope: ConfigScope) -> Result<()> {
         let mut args: Vec<&str> = vec!["config"];
-        if global {
-            args.push("--global");
-        }
+        args.extend(scope.flag());
         args.extend_from_slice(&["--unset", key]);
 
         let output = Command::new("git")
@@ -246,16 +282,111 @@ impl Repo {
 
     /// Does a local branch named `branch` exist?
     pub fn branch_exists(&self, branch: &str) -> Result<bool> {
-        let spec = format!("refs/heads/{branch}");
+        self.ref_exists(&format!("refs/heads/{branch}"))
+    }
+
+    /// Does the remote-tracking branch `<remote>/<branch>` exist?
+    pub fn remote_branch_exists(&self, remote: &str, branch: &str) -> Result<bool> {
+        self.ref_exists(&format!("refs/remotes/{remote}/{branch}"))
+    }
+
+    /// Does `spec` resolve to an existing ref or commit (quietly)?
+    pub fn has_ref(&self, spec: &str) -> Result<bool> {
+        self.ref_exists(spec)
+    }
+
+    /// Does `spec` resolve to an existing ref (quietly)?
+    fn ref_exists(&self, spec: &str) -> Result<bool> {
         let output = Command::new("git")
             .current_dir(&self.cwd)
-            .args(["rev-parse", "--verify", "--quiet", &spec])
+            .args(["rev-parse", "--verify", "--quiet", spec])
             .output()
             .map_err(|source| GitError::Spawn {
                 cmd: format!("rev-parse --verify {spec}"),
                 source,
             })?;
         Ok(output.status.success())
+    }
+
+    /// The short name of the currently checked-out branch, if not detached.
+    pub fn current_branch(&self) -> Result<Option<String>> {
+        let output = Command::new("git")
+            .current_dir(&self.cwd)
+            .args(["symbolic-ref", "--quiet", "--short", "HEAD"])
+            .output()
+            .map_err(|source| GitError::Spawn {
+                cmd: "symbolic-ref --short HEAD".to_string(),
+                source,
+            })?;
+        if output.status.success() {
+            Ok(Some(
+                String::from_utf8_lossy(&output.stdout).trim().to_string(),
+            ))
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// The default branch of `remote` (its HEAD), e.g. `main`, if known.
+    pub fn remote_head_branch(&self, remote: &str) -> Result<Option<String>> {
+        let spec = format!("refs/remotes/{remote}/HEAD");
+        let output = Command::new("git")
+            .current_dir(&self.cwd)
+            .args(["symbolic-ref", "--quiet", &spec])
+            .output()
+            .map_err(|source| GitError::Spawn {
+                cmd: format!("symbolic-ref {spec}"),
+                source,
+            })?;
+        if output.status.success() {
+            let full = String::from_utf8_lossy(&output.stdout);
+            let prefix = format!("refs/remotes/{remote}/");
+            Ok(full.trim().strip_prefix(&prefix).map(str::to_string))
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// The configured URL of `remote` (`git remote get-url <remote>`), if any.
+    pub fn remote_url(&self, remote: &str) -> Result<Option<String>> {
+        let output = Command::new("git")
+            .current_dir(&self.cwd)
+            .args(["remote", "get-url", remote])
+            .output()
+            .map_err(|source| GitError::Spawn {
+                cmd: format!("remote get-url {remote}"),
+                source,
+            })?;
+        if output.status.success() {
+            Ok(Some(
+                String::from_utf8_lossy(&output.stdout).trim().to_string(),
+            ))
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// Prune worktree registry entries whose directories are gone
+    /// (`git worktree prune`).
+    pub fn worktree_prune(&self) -> Result<()> {
+        self.git(&["worktree", "prune"])?;
+        Ok(())
+    }
+
+    /// Fetch `remote` (`git fetch <remote>`).
+    ///
+    /// # Errors
+    /// Returns [`GitError`] if `git` cannot be spawned or the fetch fails
+    /// (e.g. the network is unavailable).
+    pub fn fetch(&self, remote: &str) -> Result<()> {
+        self.git(&["fetch", remote])?;
+        Ok(())
+    }
+
+    /// Set the upstream of local `branch` to `upstream` (`<remote>/<name>`).
+    pub fn set_upstream(&self, branch: &str, upstream: &str) -> Result<()> {
+        self.git(&["branch", &format!("--set-upstream-to={upstream}"), branch])?;
+        Ok(())
     }
 
     /// Create a worktree at `path`.
@@ -384,6 +515,42 @@ pub fn config_file_get(file: &Path, key: &str) -> Result<Option<String>> {
     }
 }
 
+/// Read all values for a (possibly multi-valued) key from an arbitrary
+/// git-config INI file (`git config -f <file> --get-all <key>`).
+///
+/// Returns an empty vector when the key is absent (git exit code 1). Works
+/// without a repository, so it can read `.gtrconfig` / `.groveconfig` directly.
+///
+/// # Errors
+///
+/// Returns an error if `git` cannot be spawned or fails for any reason other
+/// than the key being missing.
+pub fn config_file_get_all(file: &Path, key: &str) -> Result<Vec<String>> {
+    let file = file.to_string_lossy().into_owned();
+    let output = Command::new("git")
+        .args(["config", "-f", &file, "--get-all", key])
+        .output()
+        .map_err(|source| GitError::Spawn {
+            cmd: format!("config -f {file} --get-all {key}"),
+            source,
+        })?;
+    if output.status.success() {
+        Ok(String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .map(str::trim)
+            .filter(|l| !l.is_empty())
+            .map(str::to_string)
+            .collect())
+    } else if output.status.code() == Some(1) {
+        Ok(Vec::new())
+    } else {
+        Err(GitError::Command {
+            cmd: format!("config -f {file} --get-all {key}"),
+            stderr: String::from_utf8_lossy(&output.stderr).trim().to_string(),
+        })
+    }
+}
+
 /// Parse the output of `git worktree list --porcelain`.
 fn parse_worktrees(s: &str) -> Vec<Worktree> {
     let mut out = Vec::new();
@@ -408,6 +575,7 @@ fn parse_worktrees(s: &str) -> Vec<Worktree> {
                     bare: false,
                     detached: false,
                     locked: false,
+                    prunable: false,
                 });
             }
             "HEAD" => set(&mut cur, |w| w.head = val.map(str::to_string)),
@@ -417,6 +585,7 @@ fn parse_worktrees(s: &str) -> Vec<Worktree> {
             "bare" => set(&mut cur, |w| w.bare = true),
             "detached" => set(&mut cur, |w| w.detached = true),
             "locked" => set(&mut cur, |w| w.locked = true),
+            "prunable" => set(&mut cur, |w| w.prunable = true),
             _ => {}
         }
     }
@@ -505,17 +674,29 @@ detached
         let repo = Repo::discover_from(&dir).unwrap();
 
         assert_eq!(repo.config_get("grove.test.key").unwrap(), None);
-        repo.config_set("grove.test.key", "hello", false).unwrap();
+        repo.config_set("grove.test.key", "hello", ConfigScope::Local)
+            .unwrap();
         assert_eq!(
             repo.config_get("grove.test.key").unwrap().as_deref(),
             Some("hello")
         );
         let listed = repo.config_list_grove().unwrap();
         assert!(listed.contains(&("grove.test.key".to_string(), "hello".to_string())));
-        repo.config_unset("grove.test.key", false).unwrap();
+        // --add appends a second value to the multi-valued key.
+        repo.config_add("grove.test.multi", "a", ConfigScope::Local)
+            .unwrap();
+        repo.config_add("grove.test.multi", "b", ConfigScope::Local)
+            .unwrap();
+        assert_eq!(
+            repo.config_get_all("grove.test.multi").unwrap(),
+            vec!["a".to_string(), "b".to_string()]
+        );
+        repo.config_unset("grove.test.key", ConfigScope::Local)
+            .unwrap();
         assert_eq!(repo.config_get("grove.test.key").unwrap(), None);
         // Unsetting a missing key is a no-op.
-        repo.config_unset("grove.test.key", false).unwrap();
+        repo.config_unset("grove.test.key", ConfigScope::Local)
+            .unwrap();
 
         let _ = std::fs::remove_dir_all(&dir);
     }
