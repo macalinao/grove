@@ -1,7 +1,12 @@
+use core::time::Duration;
+use std::io::IsTerminal;
+use std::path::PathBuf;
+
 use anyhow::{Result, anyhow};
 use bpaf::Bpaf;
 use console::style;
 use grove_core::{Grove, PrState, RemoveOpts};
+use indicatif::{ProgressBar, ProgressStyle};
 
 use crate::ui;
 
@@ -86,22 +91,30 @@ pub fn execute(args: &Clean) -> Result<()> {
 }
 
 /// Find worktrees whose PR/MR state matches the requested flags.
+///
+/// Each candidate branch means a `gh`/`glab` network round-trip, so a spinner
+/// reports progress while they run (hidden when stderr isn't a terminal).
 fn collect_targets(
     grove: &Grove,
     forge: &dyn grove_core::Forge,
     args: &Clean,
-) -> Result<Vec<(std::path::PathBuf, String, PrState)>> {
+) -> Result<Vec<(PathBuf, String, PrState)>> {
     let root = grove.root();
+    // Candidates: every non-main worktree that has a branch to query.
+    let candidates: Vec<(PathBuf, String)> = grove
+        .list()?
+        .into_iter()
+        .filter(|wt| wt.path != root)
+        .filter_map(|wt| wt.branch.clone().map(|b| (wt.path, b)))
+        .collect();
+
+    let progress = progress_bar(candidates.len() as u64);
     let mut targets = Vec::new();
-    for wt in grove.list()? {
-        // Never touch the main worktree.
-        if wt.path == root {
-            continue;
-        }
-        let Some(branch) = wt.branch.clone() else {
-            continue;
-        };
-        let Some(pr) = forge.pr_for_branch(&branch)? else {
+    for (path, branch) in candidates {
+        progress.set_message(branch.clone());
+        let pr = forge.pr_for_branch(&branch)?;
+        progress.inc(1);
+        let Some(pr) = pr else {
             continue;
         };
         let wanted = (args.merged && pr.state == PrState::Merged)
@@ -114,9 +127,25 @@ fn collect_targets(
                 continue;
             }
         }
-        targets.push((wt.path, branch, pr.state));
+        targets.push((path, branch, pr.state));
     }
+    progress.finish_and_clear();
     Ok(targets)
+}
+
+/// A spinner over `len` forge queries, or a hidden no-op bar when there's
+/// nothing to show or stderr isn't a terminal (so piped output stays clean).
+fn progress_bar(len: u64) -> ProgressBar {
+    if len == 0 || !std::io::stderr().is_terminal() {
+        return ProgressBar::hidden();
+    }
+    let bar = ProgressBar::new(len);
+    bar.set_style(
+        ProgressStyle::with_template("{spinner:.blue} checking PRs {pos}/{len} {wide_msg}")
+            .unwrap_or_else(|_| ProgressStyle::default_spinner()),
+    );
+    bar.enable_steady_tick(Duration::from_millis(80));
+    bar
 }
 
 fn describe(state: PrState) -> &'static str {

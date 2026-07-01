@@ -15,6 +15,27 @@ fn list_shows_main_and_new_worktrees() {
 }
 
 #[test]
+fn list_json_emits_parseable_worktree_array() {
+    let r = TestRepo::new();
+    ok(&r.grove(&["new", "feature", "--no-fetch"]));
+    let out = ok(&r.grove(&["list", "--json"]));
+
+    let parsed: serde_json::Value = serde_json::from_str(&out).expect("valid JSON");
+    let arr = parsed.as_array().expect("a JSON array");
+    // main + feature.
+    assert_eq!(arr.len(), 2, "json: {out}");
+
+    let feature = arr
+        .iter()
+        .find(|w| w["branch"] == "feature")
+        .expect("feature worktree present");
+    assert_eq!(feature["status"], "ok");
+    assert_eq!(feature["path"], *r.wt("feature").to_string_lossy());
+    assert_eq!(feature["locked"], false);
+    assert!(feature["head"].is_string(), "head is the commit sha");
+}
+
+#[test]
 fn list_porcelain_is_tab_separated_path_branch_status() {
     let r = TestRepo::new();
     ok(&r.grove(&["new", "feature", "--no-fetch"]));

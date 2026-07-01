@@ -29,7 +29,10 @@ path = "src/bin/git-grove.rs"
 anyhow.workspace = true
 bpaf.workspace = true
 console.workspace = true
+indicatif.workspace = true
 kdl.workspace = true
+serde.workspace = true
+serde_json.workspace = true
 shlex.workspace = true
 grove-adapters.workspace = true
 grove-core.workspace = true
@@ -37,4 +40,5 @@ grove-tasks.workspace = true
 grove-shell.workspace = true
 
 [dev-dependencies]
+serde_json.workspace = true
 tempfile.workspace = true
