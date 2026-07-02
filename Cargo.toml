@@ -57,6 +57,16 @@ strip = true
 pedantic = { level = "warn", priority = -1 }
 complexity = { level = "deny", priority = -1 }
 must_use_candidate = "allow"
+# Noisy pedantic lints intentionally allowed workspace-wide:
+# - `struct_excessive_bools`: bpaf CLI arg structs and git porcelain flags map
+#   one bool per switch/flag; grouping them would obscure the mapping.
+# - `needless_pass_by_value`: command `execute(args)` handlers take their parsed
+#   args by value by dispatch convention.
+# - `unnecessary_wraps`: command handlers share a uniform `-> Result<()>`
+#   signature even when a given handler is currently infallible.
+struct_excessive_bools = "allow"
+needless_pass_by_value = "allow"
+unnecessary_wraps = "allow"
 unwrap_used = "deny"
 std_instead_of_alloc = "deny"
 std_instead_of_core = "deny"

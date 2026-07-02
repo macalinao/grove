@@ -40,15 +40,39 @@ pub struct ResetOpts {
 }
 
 /// A database backend that supports per-branch clones.
+///
+/// # Errors
+/// Every method returns [`DbError`] when the underlying engine operation fails
+/// (e.g. the template is missing or the backend rejects the request).
 pub trait DbEngine {
     /// Create-if-missing (and migrate to head), returning the env to export.
+    ///
+    /// # Errors
+    /// Returns [`DbError`] if the branch database cannot be provisioned.
     fn ensure(&self, branch: &str) -> Result<DbHandle>;
     /// The env for an existing branch DB, without creating it.
+    ///
+    /// # Errors
+    /// Returns [`DbError`] if the branch database's env cannot be resolved.
     fn env(&self, branch: &str) -> Result<DbHandle>;
+    /// Reset the branch database per `opts`.
+    ///
+    /// # Errors
+    /// Returns [`DbError`] if the reset fails.
     fn reset(&self, branch: &str, opts: &ResetOpts) -> Result<()>;
+    /// Drop the branch database.
+    ///
+    /// # Errors
+    /// Returns [`DbError`] if the drop fails.
     fn drop(&self, branch: &str) -> Result<()>;
     /// Refresh the template/baseline from `from_ref` (auto-sync, §7.4).
+    ///
+    /// # Errors
+    /// Returns [`DbError`] if the template cannot be refreshed.
     fn sync_template(&self, from_ref: &str) -> Result<()>;
     /// Is this branch's DB missing or behind the template head?
+    ///
+    /// # Errors
+    /// Returns [`DbError`] if staleness cannot be determined.
     fn is_stale(&self, branch: &str) -> Result<bool>;
 }

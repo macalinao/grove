@@ -94,6 +94,9 @@ impl TaskGraph {
 /// Implementations must be `Sync` (the executor calls `run` from many threads).
 pub trait TaskRunner: Sync {
     /// Run `task`; return `Err(message)` on failure.
+    ///
+    /// # Errors
+    /// Returns `Err(message)` describing why the task's command failed.
     fn run(&self, task: &TaskSpec) -> core::result::Result<(), String>;
 }
 
@@ -108,9 +111,7 @@ pub struct ExecOpts {
 
 impl Default for ExecOpts {
     fn default() -> Self {
-        let concurrency = std::thread::available_parallelism()
-            .map(core::num::NonZero::get)
-            .unwrap_or(1);
+        let concurrency = std::thread::available_parallelism().map_or(1, core::num::NonZero::get);
         ExecOpts {
             concurrency,
             keep_going: false,
@@ -145,6 +146,10 @@ impl RunReport {
 }
 
 /// Convenience: build a graph from `specs` and execute it.
+///
+/// # Errors
+/// Returns [`TasksError`] if `specs` do not form a valid graph (e.g. a cycle or
+/// an unknown dependency).
 pub fn run(specs: Vec<TaskSpec>, opts: ExecOpts, runner: &dyn TaskRunner) -> Result<RunReport> {
     let graph = build_graph(specs)?;
     Ok(execute(&graph, opts, runner))

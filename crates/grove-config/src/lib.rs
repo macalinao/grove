@@ -185,6 +185,9 @@ impl Default for Config {
 
 impl Config {
     /// Load and merge all configuration sources for `repo`.
+    ///
+    /// # Errors
+    /// Returns an error if a configuration source cannot be read or parsed.
     pub fn load(repo: &Repo) -> Result<Config> {
         let mut cfg = Config::default();
         let root = repo
