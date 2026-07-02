@@ -13,7 +13,7 @@ use reqwest::Client;
 use serde::Deserialize;
 use tokio::runtime::Runtime;
 
-use crate::{Forge, ForgeError, PrInfo, PrState, Provider, Result};
+use crate::{Forge, ForgeError, Issue, PrInfo, PrState, Provider, Result, Url, web_base};
 
 /// How many recent PRs to scan when matching a head branch.
 const PULL_LIMIT: u32 = 50;
@@ -22,6 +22,7 @@ const PULL_LIMIT: u32 = 50;
 pub struct GiteaForge {
     client: Client,
     api_base: String,
+    web_base: String,
     owner: String,
     repo: String,
     token: Option<String>,
@@ -53,6 +54,7 @@ impl GiteaForge {
         Ok(GiteaForge {
             client,
             api_base: api_base(host),
+            web_base: web_base(host),
             owner: owner.to_string(),
             repo: repo.to_string(),
             token: token.filter(|t| !t.is_empty()),
@@ -60,30 +62,57 @@ impl GiteaForge {
         })
     }
 
-    /// Fetch the most recent PR whose head branch is `branch`.
-    async fn fetch_pull(&self, branch: &str) -> Result<Option<GtPull>> {
-        let url = format!("{}/repos/{}/{}/pulls", self.api_base, self.owner, self.repo);
-        let limit = PULL_LIMIT.to_string();
-        let request = self.client.get(&url).query(&[
-            ("state", "all"),
-            ("sort", "recentupdate"),
-            ("limit", limit.as_str()),
-        ]);
-        let request = match &self.token {
+    /// Build an authenticated GET request for `url` (adds the `token` header).
+    fn get(&self, url: &str) -> reqwest::RequestBuilder {
+        let request = self.client.get(url);
+        match &self.token {
             Some(t) => request.header("Authorization", format!("token {t}")),
             None => request,
-        };
-        let response = request
+        }
+    }
+
+    /// Deserialize a JSON response, mapping transport/HTTP errors uniformly.
+    async fn fetch<T: serde::de::DeserializeOwned>(request: reqwest::RequestBuilder) -> Result<T> {
+        request
             .send()
             .await
             .map_err(|e| ForgeError::Request(e.to_string()))?
             .error_for_status()
-            .map_err(|e| ForgeError::Request(e.to_string()))?;
-        let pulls: Vec<GtPull> = response
+            .map_err(|e| ForgeError::Request(e.to_string()))?
             .json()
             .await
-            .map_err(|e| ForgeError::Request(e.to_string()))?;
+            .map_err(|e| ForgeError::Request(e.to_string()))
+    }
+
+    /// Fetch the most recent PR whose head branch is `branch`.
+    async fn fetch_pull(&self, branch: &str) -> Result<Option<GtPull>> {
+        let url = format!("{}/repos/{}/{}/pulls", self.api_base, self.owner, self.repo);
+        let limit = PULL_LIMIT.to_string();
+        let request = self.get(&url).query(&[
+            ("state", "all"),
+            ("sort", "recentupdate"),
+            ("limit", limit.as_str()),
+        ]);
+        let pulls: Vec<GtPull> = Self::fetch(request).await?;
         Ok(pulls.into_iter().find(|p| p.head.ref_ == branch))
+    }
+
+    /// Fetch a single PR by number.
+    async fn fetch_pull_by_number(&self, number: u64) -> Result<GtPull> {
+        let url = format!(
+            "{}/repos/{}/{}/pulls/{number}",
+            self.api_base, self.owner, self.repo
+        );
+        Self::fetch(self.get(&url)).await
+    }
+
+    /// Fetch a single issue by number.
+    async fn fetch_issue(&self, number: u64) -> Result<GtIssue> {
+        let url = format!(
+            "{}/repos/{}/{}/issues/{number}",
+            self.api_base, self.owner, self.repo
+        );
+        Self::fetch(self.get(&url)).await
     }
 }
 
@@ -96,6 +125,27 @@ impl Forge for GiteaForge {
         let pull = self.runtime.block_on(self.fetch_pull(branch))?;
         Ok(pull.map(pr_info))
     }
+
+    fn pr_by_number(&self, number: u64) -> Result<PrInfo> {
+        let pull = self.runtime.block_on(self.fetch_pull_by_number(number))?;
+        Ok(pr_info(pull))
+    }
+
+    fn issue(&self, number: u64) -> Result<Issue> {
+        let issue = self.runtime.block_on(self.fetch_issue(number))?;
+        Ok(Issue {
+            number: issue.number,
+            title: issue.title,
+        })
+    }
+
+    fn compare_url(&self, base: &str, head: &str) -> Result<Url> {
+        let raw = format!(
+            "{}/{}/{}/compare/{base}...{head}",
+            self.web_base, self.owner, self.repo
+        );
+        Url::parse(&raw).map_err(|e| ForgeError::Request(e.to_string()))
+    }
 }
 
 /// Build the `reqwest` client, disabling TLS verification when `insecure`.
@@ -106,24 +156,62 @@ fn build_client(insecure: bool) -> Result<Client> {
         .map_err(|e| ForgeError::Request(e.to_string()))
 }
 
-/// The subset of a Gitea pull-request object Grove needs from the list endpoint.
+/// The subset of a Gitea pull-request object Grove needs.
 #[derive(Deserialize)]
 struct GtPull {
     #[serde(default)]
+    number: u64,
+    #[serde(default)]
     state: String,
+    #[serde(default)]
+    title: String,
     #[serde(default)]
     merged: bool,
     #[serde(default)]
     base: GtRef,
     #[serde(default)]
-    head: GtRef,
+    head: GtHead,
 }
 
-/// A pull request's `base`/`head` ref (only the branch name is consumed).
+/// A pull request's `base` ref (only the branch name is consumed).
 #[derive(Deserialize, Default)]
 struct GtRef {
     #[serde(rename = "ref", default)]
     ref_: String,
+}
+
+/// A pull request's `head` ref plus its repository (for fork detection).
+#[derive(Deserialize, Default)]
+struct GtHead {
+    #[serde(rename = "ref", default)]
+    ref_: String,
+    #[serde(default)]
+    repo: Option<GtRepo>,
+}
+
+/// A Gitea repository object (`owner.login` + `name`).
+#[derive(Deserialize, Default)]
+struct GtRepo {
+    #[serde(default)]
+    name: String,
+    #[serde(default)]
+    owner: GtOwner,
+}
+
+/// A repository owner (`login`).
+#[derive(Deserialize, Default)]
+struct GtOwner {
+    #[serde(default)]
+    login: String,
+}
+
+/// The subset of a Gitea issue object Grove needs.
+#[derive(Deserialize)]
+struct GtIssue {
+    #[serde(default)]
+    number: u64,
+    #[serde(default)]
+    title: String,
 }
 
 /// Map a Gitea pull object to a [`PrInfo`]. Gitea reports `state` as
@@ -137,9 +225,19 @@ fn pr_info(pull: GtPull) -> PrInfo {
     } else {
         PrState::Open
     };
+    let (head_owner, head_repo) = pull
+        .head
+        .repo
+        .map(|r| (r.owner.login, r.name))
+        .unwrap_or_default();
     PrInfo {
+        number: pull.number,
         state,
         base: pull.base.ref_,
+        head: pull.head.ref_,
+        head_owner,
+        head_repo,
+        title: pull.title,
     }
 }
 
@@ -183,31 +281,68 @@ mod tests {
 
     #[test]
     fn pr_info_uses_merged_bool_over_state() {
-        let merged = pr_info(GtPull {
-            state: "closed".into(),
-            merged: true,
-            base: GtRef {
-                ref_: "main".into(),
-            },
-            head: GtRef::default(),
-        });
+        let merged: GtPull =
+            serde_json::from_str(r#"{"state":"closed","merged":true,"base":{"ref":"main"}}"#)
+                .unwrap();
+        let merged = pr_info(merged);
         assert_eq!(merged.state, PrState::Merged);
         assert_eq!(merged.base, "main");
 
-        let closed = pr_info(GtPull {
-            state: "closed".into(),
-            merged: false,
-            base: GtRef::default(),
-            head: GtRef::default(),
-        });
-        assert_eq!(closed.state, PrState::Closed);
+        let closed: GtPull = serde_json::from_str(r#"{"state":"closed","merged":false}"#).unwrap();
+        assert_eq!(pr_info(closed).state, PrState::Closed);
 
-        let open = pr_info(GtPull {
-            state: "open".into(),
-            merged: false,
-            base: GtRef::default(),
-            head: GtRef::default(),
-        });
-        assert_eq!(open.state, PrState::Open);
+        let open: GtPull = serde_json::from_str(r#"{"state":"open","merged":false}"#).unwrap();
+        assert_eq!(pr_info(open).state, PrState::Open);
+    }
+
+    /// A recorded `GET /repos/{owner}/{repo}/pulls/{n}` body for a fork PR.
+    const FORK_PULL: &str = r#"{
+        "number": 17,
+        "state": "open",
+        "title": "Improve docs",
+        "merged": false,
+        "base": { "ref": "main" },
+        "head": {
+            "ref": "docs/improve",
+            "repo": { "name": "demo", "owner": { "login": "contributor" } }
+        }
+    }"#;
+
+    /// A recorded `GET /repos/{owner}/{repo}/issues/{n}` body.
+    const ISSUE: &str = r#"{ "number": 7, "title": "Typo in README" }"#;
+
+    #[test]
+    fn pr_by_number_reports_fork_head_and_title() {
+        let server = crate::test_server::serve(&[("/pulls/", FORK_PULL), ("/issues/", ISSUE)]);
+        let forge = GiteaForge::new("octo", "demo", &server.base, None, false).unwrap();
+
+        let pr = forge.pr_by_number(17).unwrap();
+        assert_eq!(pr.number, 17);
+        assert_eq!(pr.state, PrState::Open);
+        assert_eq!(pr.title, "Improve docs");
+        assert_eq!(pr.base, "main");
+        assert_eq!(pr.head, "docs/improve");
+        assert_eq!(pr.head_owner, "contributor");
+        assert_eq!(pr.head_repo, "demo");
+    }
+
+    #[test]
+    fn issue_reports_number_and_title() {
+        let server = crate::test_server::serve(&[("/pulls/", FORK_PULL), ("/issues/", ISSUE)]);
+        let forge = GiteaForge::new("octo", "demo", &server.base, None, false).unwrap();
+
+        let issue = forge.issue(7).unwrap();
+        assert_eq!(issue.number, 7);
+        assert_eq!(issue.title, "Typo in README");
+    }
+
+    #[test]
+    fn compare_url_has_no_expand_query() {
+        let forge = GiteaForge::new("octo", "demo", "gitea.myhost.com", None, false).unwrap();
+        let url = forge.compare_url("main", "docs/improve").unwrap();
+        assert_eq!(
+            url.as_str(),
+            "https://gitea.myhost.com/octo/demo/compare/main...docs/improve"
+        );
     }
 }

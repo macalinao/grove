@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 pub use grove_config::{
     Config, ConfigError, TrackMode, TrustStatus, is_trusted, record_trust, trust_status,
 };
-pub use grove_forge::{CliForge, Forge, ForgeError, PrInfo, PrState, Provider};
+pub use grove_forge::{CliForge, Forge, ForgeError, Issue, PrInfo, PrState, Provider, Url};
 pub use grove_git::{ConfigScope, GitError, Repo, Worktree};
 
 pub mod copy;

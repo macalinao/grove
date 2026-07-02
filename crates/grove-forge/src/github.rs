@@ -10,12 +10,13 @@ use octocrab::Octocrab;
 use serde::{Deserialize, Serialize};
 use tokio::runtime::Runtime;
 
-use crate::{Forge, ForgeError, PrInfo, PrState, Provider, Result};
+use crate::{Forge, ForgeError, Issue, PrInfo, PrState, Provider, Result, Url, web_base};
 
 /// A [`Forge`] talking to GitHub's REST API via `octocrab`.
 pub struct GitHubForge {
     client: Octocrab,
     api_base: String,
+    web_base: String,
     owner: String,
     repo: String,
     runtime: Runtime,
@@ -51,6 +52,7 @@ impl GitHubForge {
         Ok(GitHubForge {
             client,
             api_base: api_base(host),
+            web_base: web_base(host),
             owner: owner.to_string(),
             repo: repo.to_string(),
             runtime,
@@ -72,6 +74,30 @@ impl GitHubForge {
             .map_err(|e| ForgeError::Request(e.to_string()))?;
         Ok(pulls.into_iter().next())
     }
+
+    /// Fetch a single PR by number.
+    async fn fetch_pull_by_number(&self, number: u64) -> Result<GhPull> {
+        let url = format!(
+            "{}/repos/{}/{}/pulls/{number}",
+            self.api_base, self.owner, self.repo
+        );
+        self.client
+            .get(&url, None::<&()>)
+            .await
+            .map_err(|e| ForgeError::Request(e.to_string()))
+    }
+
+    /// Fetch a single issue by number.
+    async fn fetch_issue(&self, number: u64) -> Result<GhIssue> {
+        let url = format!(
+            "{}/repos/{}/{}/issues/{number}",
+            self.api_base, self.owner, self.repo
+        );
+        self.client
+            .get(&url, None::<&()>)
+            .await
+            .map_err(|e| ForgeError::Request(e.to_string()))
+    }
 }
 
 impl Forge for GitHubForge {
@@ -83,6 +109,27 @@ impl Forge for GitHubForge {
         let pull = self.runtime.block_on(self.fetch_pull(branch))?;
         Ok(pull.map(pr_info))
     }
+
+    fn pr_by_number(&self, number: u64) -> Result<PrInfo> {
+        let pull = self.runtime.block_on(self.fetch_pull_by_number(number))?;
+        Ok(pr_info(pull))
+    }
+
+    fn issue(&self, number: u64) -> Result<Issue> {
+        let issue = self.runtime.block_on(self.fetch_issue(number))?;
+        Ok(Issue {
+            number: issue.number,
+            title: issue.title,
+        })
+    }
+
+    fn compare_url(&self, base: &str, head: &str) -> Result<Url> {
+        let raw = format!(
+            "{}/{}/{}/compare/{base}...{head}?expand=1",
+            self.web_base, self.owner, self.repo
+        );
+        Url::parse(&raw).map_err(|e| ForgeError::Request(e.to_string()))
+    }
 }
 
 /// Query parameters for `GET /repos/{owner}/{repo}/pulls`.
@@ -93,26 +140,66 @@ struct PullQuery<'a> {
     per_page: u8,
 }
 
-/// The subset of a pull-request object Grove needs from the list endpoint.
+/// The subset of a pull-request object Grove needs.
 #[derive(Deserialize)]
 struct GhPull {
     #[serde(default)]
+    number: u64,
+    #[serde(default)]
     state: String,
+    #[serde(default)]
+    title: String,
     #[serde(default)]
     merged_at: Option<String>,
     #[serde(default)]
-    base: GhBase,
+    base: GhRef,
+    #[serde(default)]
+    head: GhHead,
 }
 
-/// A pull request's `base` (target) ref.
+/// A pull request's `base` (target) ref — only the branch name is consumed.
 #[derive(Deserialize, Default)]
-struct GhBase {
+struct GhRef {
     #[serde(rename = "ref", default)]
     ref_: String,
 }
 
-/// Map a GitHub pull object to a [`PrInfo`]. The list endpoint reports `state`
-/// as `open`/`closed`; a closed PR with a `merged_at` timestamp is merged.
+/// A pull request's `head` (source) ref plus its repository (for fork detection).
+#[derive(Deserialize, Default)]
+struct GhHead {
+    #[serde(rename = "ref", default)]
+    ref_: String,
+    #[serde(default)]
+    repo: Option<GhRepo>,
+}
+
+/// A repository object (`owner.login` + `name`).
+#[derive(Deserialize, Default)]
+struct GhRepo {
+    #[serde(default)]
+    name: String,
+    #[serde(default)]
+    owner: GhOwner,
+}
+
+/// A repository owner (`login`).
+#[derive(Deserialize, Default)]
+struct GhOwner {
+    #[serde(default)]
+    login: String,
+}
+
+/// The subset of an issue object Grove needs.
+#[derive(Deserialize)]
+struct GhIssue {
+    #[serde(default)]
+    number: u64,
+    #[serde(default)]
+    title: String,
+}
+
+/// Map a GitHub pull object to a [`PrInfo`]. The endpoint reports `state` as
+/// `open`/`closed`; a closed PR with a `merged_at` timestamp is merged.
 fn pr_info(pull: GhPull) -> PrInfo {
     let state = if pull.state.eq_ignore_ascii_case("open") {
         PrState::Open
@@ -121,9 +208,19 @@ fn pr_info(pull: GhPull) -> PrInfo {
     } else {
         PrState::Closed
     };
+    let (head_owner, head_repo) = pull
+        .head
+        .repo
+        .map(|r| (r.owner.login, r.name))
+        .unwrap_or_default();
     PrInfo {
+        number: pull.number,
         state,
         base: pull.base.ref_,
+        head: pull.head.ref_,
+        head_owner,
+        head_repo,
+        title: pull.title,
     }
 }
 
@@ -183,28 +280,76 @@ mod tests {
 
     #[test]
     fn pr_info_distinguishes_merged_from_closed() {
-        let merged = pr_info(GhPull {
-            state: "closed".into(),
-            merged_at: Some("2026-01-01T00:00:00Z".into()),
-            base: GhBase {
-                ref_: "main".into(),
-            },
-        });
+        let merged: GhPull = serde_json::from_str(
+            r#"{"state":"closed","merged_at":"2026-01-01T00:00:00Z","base":{"ref":"main"}}"#,
+        )
+        .unwrap();
+        let merged = pr_info(merged);
         assert_eq!(merged.state, PrState::Merged);
         assert_eq!(merged.base, "main");
 
-        let closed = pr_info(GhPull {
-            state: "closed".into(),
-            merged_at: None,
-            base: GhBase::default(),
-        });
-        assert_eq!(closed.state, PrState::Closed);
+        let closed: GhPull = serde_json::from_str(r#"{"state":"closed"}"#).unwrap();
+        assert_eq!(pr_info(closed).state, PrState::Closed);
 
-        let open = pr_info(GhPull {
-            state: "open".into(),
-            merged_at: None,
-            base: GhBase::default(),
-        });
-        assert_eq!(open.state, PrState::Open);
+        let open: GhPull = serde_json::from_str(r#"{"state":"open"}"#).unwrap();
+        assert_eq!(pr_info(open).state, PrState::Open);
+    }
+
+    /// A recorded `GET /repos/{owner}/{repo}/pulls/{n}` body for a fork PR.
+    const FORK_PULL: &str = r#"{
+        "number": 42,
+        "state": "open",
+        "title": "Add widget support",
+        "merged_at": null,
+        "base": { "ref": "main" },
+        "head": {
+            "ref": "feat/widget",
+            "repo": { "name": "demo", "owner": { "login": "contributor" } }
+        }
+    }"#;
+
+    /// A recorded `GET /repos/{owner}/{repo}/issues/{n}` body.
+    const ISSUE: &str = r#"{ "number": 88, "title": "Widgets should wobble" }"#;
+
+    #[test]
+    fn pr_by_number_reports_fork_head_and_title() {
+        let server = crate::test_server::serve(&[("/pulls/", FORK_PULL), ("/issues/", ISSUE)]);
+        let forge = GitHubForge::new("octo", "demo", &server.base, None).unwrap();
+
+        let pr = forge.pr_by_number(42).unwrap();
+        assert_eq!(pr.number, 42);
+        assert_eq!(pr.state, PrState::Open);
+        assert_eq!(pr.title, "Add widget support");
+        assert_eq!(pr.base, "main");
+        assert_eq!(pr.head, "feat/widget");
+        // Fork detection: head owner differs from the repo owner.
+        assert_eq!(pr.head_owner, "contributor");
+        assert_eq!(pr.head_repo, "demo");
+    }
+
+    #[test]
+    fn issue_reports_number_and_title() {
+        let server = crate::test_server::serve(&[("/pulls/", FORK_PULL), ("/issues/", ISSUE)]);
+        let forge = GitHubForge::new("octo", "demo", &server.base, None).unwrap();
+
+        let issue = forge.issue(88).unwrap();
+        assert_eq!(issue.number, 88);
+        assert_eq!(issue.title, "Widgets should wobble");
+    }
+
+    #[test]
+    fn compare_url_uses_web_base_with_expand() {
+        let forge = GitHubForge::new("octo", "demo", "github.com", None).unwrap();
+        let url = forge.compare_url("main", "feat/widget").unwrap();
+        assert_eq!(
+            url.as_str(),
+            "https://github.com/octo/demo/compare/main...feat/widget?expand=1"
+        );
+
+        let ghe = GitHubForge::new("octo", "demo", "ghe.myhost.com", None).unwrap();
+        assert_eq!(
+            ghe.compare_url("main", "topic").unwrap().as_str(),
+            "https://ghe.myhost.com/octo/demo/compare/main...topic?expand=1"
+        );
     }
 }
