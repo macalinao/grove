@@ -34,6 +34,7 @@ pub fn apply(cfg: &mut Config, src: &str) -> core::result::Result<(), String> {
         }
     }
     apply_defaults(cfg, &doc);
+    apply_forge(cfg, &doc);
     apply_hooks(cfg, &doc);
     if let Some(children) = child_doc(&doc, "ui") {
         if let Some(v) = child_string(children, "color") {
@@ -61,6 +62,19 @@ fn apply_defaults(cfg: &mut Config, doc: &KdlDocument) {
     }
     if let Some(v) = child_string(children, "provider") {
         cfg.provider = Some(v);
+    }
+}
+
+/// The `forge { host; token }` block.
+fn apply_forge(cfg: &mut Config, doc: &KdlDocument) {
+    let Some(children) = child_doc(doc, "forge") else {
+        return;
+    };
+    if let Some(v) = child_string(children, "host") {
+        cfg.forge_host = Some(v);
+    }
+    if let Some(v) = child_string(children, "token") {
+        cfg.forge_token = Some(v);
     }
 }
 
@@ -196,6 +210,7 @@ mod tests {
                 postCd "source .env"
             }
             defaults { remote "upstream"; branch "main"; track "remote"; provider "gitlab" }
+            forge { host "https://gitea.myhost.com"; token "abc123" }
             editor { default "code"; workspace "app.code-workspace" }
         "#;
         let mut cfg = Config::default();
@@ -210,6 +225,8 @@ mod tests {
         assert_eq!(cfg.default_branch.as_deref(), Some("main"));
         assert_eq!(cfg.track, TrackMode::Remote);
         assert_eq!(cfg.provider.as_deref(), Some("gitlab"));
+        assert_eq!(cfg.forge_host.as_deref(), Some("https://gitea.myhost.com"));
+        assert_eq!(cfg.forge_token.as_deref(), Some("abc123"));
         assert_eq!(cfg.editor_workspace.as_deref(), Some("app.code-workspace"));
     }
 }

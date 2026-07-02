@@ -12,4 +12,11 @@ rust-version.workspace = true
 workspace = true
 
 [dependencies]
+octocrab.workspace = true
+serde = { workspace = true }
+serde_yaml.workspace = true
 thiserror.workspace = true
+tokio.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

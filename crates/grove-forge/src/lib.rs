@@ -1,15 +1,23 @@
-//! Forge integration for Grove, backed by the `gh` / `glab` CLIs.
+//! Forge integration for Grove.
 //!
-//! Mirrors gtr: the provider is auto-detected from the `origin` URL (overridable
-//! via `grove.provider`), and PR/MR state is queried through the official CLI
-//! (`gh` for GitHub, `glab` for GitLab) — which the user has already
-//! authenticated. This powers `grove clean --merged/--closed`.
+//! The provider is auto-detected from the `origin` URL (overridable via
+//! `grove.provider`). GitHub is served natively over HTTP by [`GitHubForge`]
+//! (via `octocrab`, no `gh` dependency), while GitLab still shells out to
+//! `glab` through [`CliForge`]. Tokens are discovered with zero login by
+//! reusing the credentials `gh` / `tea` already store (see [`auth`]). This
+//! powers `grove clean --merged/--closed`.
 //!
-//! A native HTTP client (no CLI dependency) can replace [`CliForge`] later
-//! behind the same [`Forge`] trait without touching callers.
+//! Callers build a forge through [`build_forge`], which detects the provider
+//! and returns a boxed [`Forge`]; the trait itself is synchronous.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
+
+pub mod auth;
+mod github;
+
+pub use auth::{TeaLogin, gitea_token, github_token};
+pub use github::GitHubForge;
 
 /// Errors from forge queries.
 #[derive(thiserror::Error, Debug)]
@@ -96,8 +104,71 @@ pub fn detect(remote_url: &str, override_: Option<&str>) -> Option<Provider> {
     }
 }
 
+/// Options that steer [`build_forge`], sourced from `grove.*` config.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct ForgeOptions<'a> {
+    /// Explicit provider override (`grove.provider`).
+    pub provider: Option<&'a str>,
+    /// Self-hosted forge base URL or host (`grove.forge.host`).
+    pub host: Option<&'a str>,
+    /// Explicit API token (`grove.forge.token`).
+    pub token: Option<&'a str>,
+}
+
+/// Build a [`Forge`] for `remote_url`, or `None` when no provider is detected.
+///
+/// GitHub is served natively (`octocrab`); GitLab shells out to `glab` from
+/// `dir`. GitHub tokens are resolved with zero login via [`auth::github_token`].
+///
+/// # Errors
+/// Returns [`ForgeError`] if the GitHub client cannot be constructed (e.g. the
+/// remote URL has no parseable `owner/repo`).
+pub fn build_forge(
+    remote_url: &str,
+    dir: &Path,
+    opts: &ForgeOptions,
+) -> Result<Option<Box<dyn Forge>>> {
+    let Some(provider) = detect(remote_url, opts.provider) else {
+        return Ok(None);
+    };
+    match provider {
+        Provider::GitHub => {
+            let forge = build_github(remote_url, opts)?;
+            Ok(Some(Box::new(forge)))
+        }
+        Provider::GitLab => Ok(Some(Box::new(CliForge::new(provider, dir)))),
+    }
+}
+
+/// Construct the native GitHub forge, resolving auth from config + `gh` creds.
+fn build_github(remote_url: &str, opts: &ForgeOptions) -> Result<GitHubForge> {
+    let (owner, repo) = owner_repo(remote_url).ok_or(ForgeError::NotConfigured)?;
+    let host = opts
+        .host
+        .map_or_else(|| host_of(remote_url), str::to_string);
+    let token = github_token(&host, opts.token);
+    GitHubForge::new(&owner, &repo, &host, token)
+}
+
+/// Extract `(owner, repo)` from a git remote URL (ssh or https form).
+fn owner_repo(url: &str) -> Option<(String, String)> {
+    let path = if let Some((_, rest)) = url.split_once("://") {
+        let rest = rest.split_once('@').map_or(rest, |(_, r)| r);
+        rest.split_once('/').map(|(_, p)| p.to_string())?
+    } else {
+        // scp-style: git@host:owner/repo.git
+        url.split_once(':').map(|(_, p)| p.to_string())?
+    };
+    let path = path.trim_end_matches('/');
+    let path = path.strip_suffix(".git").unwrap_or(path);
+    let mut parts = path.rsplit('/');
+    let repo = parts.next().filter(|s| !s.is_empty())?;
+    let owner = parts.next().filter(|s| !s.is_empty())?;
+    Some((owner.to_string(), repo.to_string()))
+}
+
 /// Extract the host portion of a git remote URL (ssh or https form).
-fn host_of(url: &str) -> String {
+pub(crate) fn host_of(url: &str) -> String {
     // scp-style: git@github.com:owner/repo.git
     if let Some(rest) = url.split_once('@').map(|(_, r)| r) {
         if let Some((host, _)) = rest.split_once(':') {
@@ -263,6 +334,27 @@ mod tests {
             detect("https://example.com/o/r", Some("github")),
             Some(Provider::GitHub)
         );
+    }
+
+    #[test]
+    fn parses_owner_repo_from_urls() {
+        assert_eq!(
+            owner_repo("git@github.com:owner/repo.git"),
+            Some(("owner".into(), "repo".into()))
+        );
+        assert_eq!(
+            owner_repo("https://github.com/owner/repo.git"),
+            Some(("owner".into(), "repo".into()))
+        );
+        assert_eq!(
+            owner_repo("https://ghe.myhost.com/o/r"),
+            Some(("o".into(), "r".into()))
+        );
+        assert_eq!(
+            owner_repo("https://user@github.com/owner/repo.git"),
+            Some(("owner".into(), "repo".into()))
+        );
+        assert_eq!(owner_repo("not-a-url"), None);
     }
 
     #[test]

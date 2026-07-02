@@ -29,6 +29,9 @@ pub enum CoreError {
     #[error(transparent)]
     Config(#[from] ConfigError),
 
+    #[error(transparent)]
+    Forge(#[from] ForgeError),
+
     #[error("no worktree matching '{0}'")]
     NotFound(String),
 
@@ -157,12 +160,16 @@ impl Grove {
     ///
     /// Returns `None` when the remote has no URL or its host isn't a known
     /// provider and none is configured.
-    pub fn forge(&self) -> Result<Option<CliForge>> {
-        let url = self.repo.remote_url(self.config.remote())?;
-        let provider = url
-            .as_deref()
-            .and_then(|u| grove_forge::detect(u, self.config.provider.as_deref()));
-        Ok(provider.map(|p| CliForge::new(p, &self.root)))
+    pub fn forge(&self) -> Result<Option<Box<dyn Forge>>> {
+        let Some(url) = self.repo.remote_url(self.config.remote())? else {
+            return Ok(None);
+        };
+        let opts = grove_forge::ForgeOptions {
+            provider: self.config.provider.as_deref(),
+            host: self.config.forge_host.as_deref(),
+            token: self.config.forge_token.as_deref(),
+        };
+        Ok(grove_forge::build_forge(&url, &self.root, &opts)?)
     }
 
     /// Build the copy specification from config plus a `.worktreeinclude` file
