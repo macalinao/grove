@@ -28,6 +28,9 @@ thiserror = "2"
 # binary completes itself; no `completion` subcommand needed).
 bpaf = { version = "0.9", features = ["derive", "autocomplete"] }
 console = "0.16"
+# `join_all` fans out per-branch forge PR lookups concurrently on the sync
+# Forge impls' current-thread runtime (`list --json`, best-effort annotation).
+futures = { version = "0.3", default-features = false, features = ["std"] }
 # `ignore` gives `.worktreeinclude` (and copy globs) real gitignore semantics
 # (anchoring, `!` negation, directory patterns).
 ignore = "0.4"

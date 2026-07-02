@@ -126,6 +126,21 @@ pub trait Forge {
     /// Returns [`ForgeError`] if the provider CLI is missing or the query fails.
     fn pr_for_branch(&self, branch: &str) -> Result<Option<PrInfo>>;
 
+    /// Resolve the PR/MR for each of `branches`, in the same order.
+    ///
+    /// Best-effort and infallible: a branch with no PR — or one whose lookup
+    /// fails (no token, offline, provider error) — yields `None`, so callers
+    /// like `grove list --json` degrade to an un-annotated entry rather than
+    /// erroring. The default implementation queries sequentially; the native
+    /// GitHub/Gitea forges override it to fan the requests out concurrently on
+    /// their internal runtime.
+    fn prs_for_branches(&self, branches: &[String]) -> Vec<Option<PrInfo>> {
+        branches
+            .iter()
+            .map(|b| self.pr_for_branch(b).unwrap_or_default())
+            .collect()
+    }
+
     /// Look up a PR/MR by number, returning its state, refs, and title.
     ///
     /// # Errors

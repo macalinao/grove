@@ -1,4 +1,4 @@
-//! `grove clean` against the native Gitea forge.
+//! `grove clean` and `grove list --json` against the native Gitea forge.
 //!
 //! Gitea is served over HTTP (`/api/v1`, a thin `reqwest` client), so these
 //! tests stand up a tiny local HTTP server and point the forge at it — no
@@ -54,18 +54,18 @@ fn handle(mut stream: std::net::TcpStream) {
     let _ = stream.flush();
 }
 
-/// The full pulls list: `state` + `merged` bool + head/base refs, mirroring
-/// Gitea's `GET /repos/{owner}/{repo}/pulls`.
+/// The full pulls list: `number` + `state` + `merged` bool + head/base refs,
+/// mirroring Gitea's `GET /repos/{owner}/{repo}/pulls`.
 fn pulls_body() -> String {
-    let pull = |state: &str, merged: bool, head: &str| {
+    let pull = |number: u64, state: &str, merged: bool, head: &str| {
         format!(
-            r#"{{"state":"{state}","merged":{merged},"base":{{"ref":"main"}},"head":{{"ref":"{head}"}}}}"#
+            r#"{{"number":{number},"state":"{state}","merged":{merged},"base":{{"ref":"main"}},"head":{{"ref":"{head}"}}}}"#
         )
     };
     let pulls = [
-        pull("closed", true, "merged-x"),
-        pull("open", false, "open-y"),
-        pull("closed", false, "closed-z"),
+        pull(1, "closed", true, "merged-x"),
+        pull(2, "open", false, "open-y"),
+        pull(3, "closed", false, "closed-z"),
     ];
     format!("[{}]", pulls.join(","))
 }
@@ -140,4 +140,61 @@ fn provider_override_on_neutral_host() {
     ok(&r.grove(&["new", "merged-x", "--no-fetch"]));
     ok(&clean(&r, &["--merged", "--yes"]));
     assert!(!r.wt("merged-x").exists());
+}
+
+#[test]
+fn list_json_annotates_pr_number_state_and_url() {
+    let r = setup();
+    ok(&r.grove(&["new", "merged-x", "--no-fetch"]));
+    ok(&r.grove(&["new", "open-y", "--no-fetch"]));
+    let out = ok(&r.grove(&["list", "--json"]));
+
+    let parsed: serde_json::Value = serde_json::from_str(&out).unwrap();
+    let arr = parsed.as_array().unwrap();
+
+    let merged = arr.iter().find(|w| w["branch"] == "merged-x").unwrap();
+    assert_eq!(merged["pr"]["number"], 1);
+    assert_eq!(merged["pr"]["state"], "merged");
+    // Web URL is derived from the configured host + owner/repo (pulls, plural).
+    assert!(
+        merged["pr"]["url"]
+            .as_str()
+            .unwrap()
+            .ends_with("/owner/repo/pulls/1"),
+        "pr url: {out}"
+    );
+
+    let open = arr.iter().find(|w| w["branch"] == "open-y").unwrap();
+    assert_eq!(open["pr"]["number"], 2);
+    assert_eq!(open["pr"]["state"], "open");
+
+    // The main worktree has no matching PR, so `pr` is absent entirely.
+    let main = arr.iter().find(|w| w["branch"] == "main").unwrap();
+    assert!(main.get("pr").is_none(), "main should have no pr: {out}");
+}
+
+#[test]
+fn list_json_pr_absent_when_forge_unreachable() {
+    // A forge is configured but the host refuses connections: PR lookups fail
+    // best-effort, so `pr` is simply absent and the command still succeeds.
+    let r = TestRepo::new();
+    r.git(&[
+        "remote",
+        "add",
+        "origin",
+        "https://gitea.myhost.com/owner/repo.git",
+    ]);
+    r.set_config("grove.forge.host", "http://127.0.0.1:1");
+    r.set_config("grove.forge.token", "test-token");
+    ok(&r.grove(&["new", "feature", "--no-fetch"]));
+
+    let out = ok(&r.grove(&["list", "--json"]));
+    let parsed: serde_json::Value = serde_json::from_str(&out).unwrap();
+    let feature = parsed
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|w| w["branch"] == "feature")
+        .unwrap();
+    assert!(feature.get("pr").is_none(), "pr should be absent: {out}");
 }

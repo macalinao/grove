@@ -112,6 +112,17 @@ impl Forge for GitHubForge {
         Ok(pull.map(pr_info))
     }
 
+    fn prs_for_branches(&self, branches: &[String]) -> Vec<Option<PrInfo>> {
+        self.runtime.block_on(async {
+            let lookups = branches.iter().map(|b| self.fetch_pull(b));
+            futures::future::join_all(lookups)
+                .await
+                .into_iter()
+                .map(|r| r.ok().flatten().map(pr_info))
+                .collect()
+        })
+    }
+
     fn pr_by_number(&self, number: u64) -> Result<PrInfo> {
         let pull = self.runtime.block_on(self.fetch_pull_by_number(number))?;
         Ok(pr_info(pull))

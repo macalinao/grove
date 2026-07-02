@@ -33,6 +33,8 @@ fn list_json_emits_parseable_worktree_array() {
     assert_eq!(feature["path"], *r.wt("feature").to_string_lossy());
     assert_eq!(feature["locked"], false);
     assert!(feature["head"].is_string(), "head is the commit sha");
+    // No forge remote configured, so PR annotation is absent.
+    assert!(feature.get("pr").is_none(), "no forge -> no pr: {out}");
 }
 
 #[test]
