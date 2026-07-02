@@ -426,6 +426,18 @@ impl Repo {
         Ok(())
     }
 
+    /// Fetch a single `refspec` from `remote` (a remote name or a URL), e.g.
+    /// `refs/pull/42/head:refs/heads/pr-42`. Fetching a PR/MR head ref directly
+    /// makes fork and cross-repo checkout work without adding a remote.
+    ///
+    /// # Errors
+    /// Returns [`GitError`] if `git fetch` cannot be spawned or the fetch fails
+    /// (e.g. the ref doesn't exist or the network is unavailable).
+    pub fn fetch_ref(&self, remote: &str, refspec: &str) -> Result<()> {
+        self.git(&["fetch", remote, refspec])?;
+        Ok(())
+    }
+
     /// Set the upstream of local `branch` to `upstream` (`<remote>/<name>`).
     ///
     /// # Errors

@@ -16,10 +16,12 @@ use std::process::Command;
 pub mod auth;
 mod gitea;
 mod github;
+mod refs;
 
 pub use auth::{TeaLogin, gitea_token, github_token, tea_login};
 pub use gitea::GiteaForge;
 pub use github::GitHubForge;
+pub use refs::{ForgeRef, ForgeUrl, ForgeUrlKind};
 /// A parsed, absolute URL (re-exported from `reqwest`/`url`).
 pub use reqwest::Url;
 

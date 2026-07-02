@@ -10,10 +10,14 @@ use std::path::{Path, PathBuf};
 pub use grove_config::{
     Config, ConfigError, TrackMode, TrustStatus, is_trusted, record_trust, trust_status,
 };
-pub use grove_forge::{CliForge, Forge, ForgeError, Issue, PrInfo, PrState, Provider, Url};
+pub use grove_forge::{
+    CliForge, Forge, ForgeError, ForgeRef, ForgeUrl, ForgeUrlKind, Issue, PrInfo, PrState,
+    Provider, Url,
+};
 pub use grove_git::{ConfigScope, GitError, Repo, Worktree};
 
 pub mod copy;
+pub mod refs;
 
 pub use copy::{
     CopySpec, ReflinkSupport, copy_dirs, copy_files, copy_into, read_worktreeinclude,
@@ -34,6 +38,9 @@ pub enum CoreError {
 
     #[error("no worktree matching '{0}'")]
     NotFound(String),
+
+    #[error("no worktree for {0} yet — create one with `grove new {0}`")]
+    NoWorktreeForRef(String),
 
     #[error("--track: {0}")]
     Track(String),
@@ -412,10 +419,62 @@ pub fn sanitize(branch: &str) -> String {
     replaced.trim_matches('-').to_string()
 }
 
+/// Turn an issue title into a lowercase, hyphen-separated branch slug.
+///
+/// Runs of non-alphanumeric characters collapse to a single `-`, the result is
+/// trimmed of leading/trailing `-`, and it is capped at [`SLUG_MAX`] bytes (on a
+/// hyphen boundary) so a long title yields a sensible branch name.
+#[must_use]
+pub fn slugify(title: &str) -> String {
+    let mut slug = String::new();
+    let mut prev_dash = true; // suppress a leading dash
+    for c in title.chars() {
+        if c.is_ascii_alphanumeric() {
+            slug.extend(c.to_lowercase());
+            prev_dash = false;
+        } else if !prev_dash {
+            slug.push('-');
+            prev_dash = true;
+        }
+    }
+    let slug = slug.trim_matches('-');
+    truncate_slug(slug).to_string()
+}
+
+/// Maximum slug length in bytes (before trailing-hyphen trimming).
+const SLUG_MAX: usize = 50;
+
+/// Truncate `slug` to at most [`SLUG_MAX`] bytes, preferring a hyphen boundary,
+/// then trimming any trailing `-`.
+fn truncate_slug(slug: &str) -> &str {
+    if slug.len() <= SLUG_MAX {
+        return slug;
+    }
+    let cut = slug[..SLUG_MAX].rfind('-').unwrap_or(SLUG_MAX);
+    slug[..cut].trim_end_matches('-')
+}
+
 #[cfg(test)]
 #[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn slugifies_titles() {
+        assert_eq!(slugify("Widgets should wobble"), "widgets-should-wobble");
+        assert_eq!(slugify("Fix: the #1 bug!!!"), "fix-the-1-bug");
+        assert_eq!(slugify("  leading/trailing  "), "leading-trailing");
+        assert_eq!(slugify("***"), "");
+    }
+
+    #[test]
+    fn slug_is_length_capped_on_a_hyphen_boundary() {
+        let long = "one two three four five six seven eight nine ten eleven twelve";
+        let slug = slugify(long);
+        assert!(slug.len() <= SLUG_MAX, "slug too long: {slug}");
+        assert!(!slug.ends_with('-'));
+        assert!(slug.starts_with("one-two-three"));
+    }
 
     #[test]
     fn sanitizes_slashes() {
