@@ -33,6 +33,9 @@ console = "0.16"
 ignore = "0.4"
 indicatif = "0.17"
 kdl = "6"
+# Opens `grove pr` / `grove open` compare/branch/PR URLs in the default browser
+# (shells out to the platform opener: xdg-open / open / start).
+open = "5"
 # Native GitHub forge client. Default features use hyper + rustls (no OpenSSL),
 # keeping grove a single static binary.
 octocrab = "0.53"

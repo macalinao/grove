@@ -13,7 +13,9 @@ use reqwest::Client;
 use serde::Deserialize;
 use tokio::runtime::Runtime;
 
-use crate::{Forge, ForgeError, Issue, PrInfo, PrState, Provider, Result, Url, web_base};
+use crate::{
+    Forge, ForgeError, Issue, PrInfo, PrState, Provider, Result, Url, parse_web_url, web_base,
+};
 
 /// How many recent PRs to scan when matching a head branch.
 const PULL_LIMIT: u32 = 50;
@@ -144,7 +146,23 @@ impl Forge for GiteaForge {
             "{}/{}/{}/compare/{base}...{head}",
             self.web_base, self.owner, self.repo
         );
-        Url::parse(&raw).map_err(|e| ForgeError::Request(e.to_string()))
+        parse_web_url(&raw)
+    }
+
+    fn branch_url(&self, branch: &str) -> Result<Url> {
+        let raw = format!(
+            "{}/{}/{}/src/branch/{branch}",
+            self.web_base, self.owner, self.repo
+        );
+        parse_web_url(&raw)
+    }
+
+    fn pr_url(&self, number: u64) -> Result<Url> {
+        let raw = format!(
+            "{}/{}/{}/pulls/{number}",
+            self.web_base, self.owner, self.repo
+        );
+        parse_web_url(&raw)
     }
 }
 
@@ -343,6 +361,19 @@ mod tests {
         assert_eq!(
             url.as_str(),
             "https://gitea.myhost.com/octo/demo/compare/main...docs/improve"
+        );
+    }
+
+    #[test]
+    fn branch_url_uses_src_branch_and_pr_url_is_plural() {
+        let forge = GiteaForge::new("octo", "demo", "gitea.myhost.com", None, false).unwrap();
+        assert_eq!(
+            forge.branch_url("docs/improve").unwrap().as_str(),
+            "https://gitea.myhost.com/octo/demo/src/branch/docs/improve"
+        );
+        assert_eq!(
+            forge.pr_url(17).unwrap().as_str(),
+            "https://gitea.myhost.com/octo/demo/pulls/17"
         );
     }
 }

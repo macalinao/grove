@@ -144,6 +144,25 @@ pub trait Forge {
     /// Returns [`ForgeError::Unsupported`] when the provider can't build one,
     /// or [`ForgeError::Request`] if the resulting URL fails to parse.
     fn compare_url(&self, base: &str, head: &str) -> Result<Url>;
+
+    /// Build the forge's web URL for viewing `branch`.
+    ///
+    /// # Errors
+    /// Returns [`ForgeError::Unsupported`] when the provider can't build one,
+    /// or [`ForgeError::Request`] if the resulting URL fails to parse.
+    fn branch_url(&self, branch: &str) -> Result<Url>;
+
+    /// Build the forge's web URL for pull/merge request `number`.
+    ///
+    /// # Errors
+    /// Returns [`ForgeError::Unsupported`] when the provider can't build one,
+    /// or [`ForgeError::Request`] if the resulting URL fails to parse.
+    fn pr_url(&self, number: u64) -> Result<Url>;
+}
+
+/// Parse a forge web URL, mapping a parse failure to [`ForgeError::Request`].
+pub(crate) fn parse_web_url(raw: &str) -> Result<Url> {
+    Url::parse(raw).map_err(|e| ForgeError::Request(e.to_string()))
 }
 
 /// Detect the provider for `remote_url`, honoring an explicit `override_` first,
@@ -435,6 +454,14 @@ impl Forge for CliForge {
 
     fn compare_url(&self, _base: &str, _head: &str) -> Result<Url> {
         Err(ForgeError::Unsupported("compare_url"))
+    }
+
+    fn branch_url(&self, _branch: &str) -> Result<Url> {
+        Err(ForgeError::Unsupported("branch_url"))
+    }
+
+    fn pr_url(&self, _number: u64) -> Result<Url> {
+        Err(ForgeError::Unsupported("pr_url"))
     }
 }
 

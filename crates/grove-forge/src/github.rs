@@ -10,7 +10,9 @@ use octocrab::Octocrab;
 use serde::{Deserialize, Serialize};
 use tokio::runtime::Runtime;
 
-use crate::{Forge, ForgeError, Issue, PrInfo, PrState, Provider, Result, Url, web_base};
+use crate::{
+    Forge, ForgeError, Issue, PrInfo, PrState, Provider, Result, Url, parse_web_url, web_base,
+};
 
 /// A [`Forge`] talking to GitHub's REST API via `octocrab`.
 pub struct GitHubForge {
@@ -128,7 +130,23 @@ impl Forge for GitHubForge {
             "{}/{}/{}/compare/{base}...{head}?expand=1",
             self.web_base, self.owner, self.repo
         );
-        Url::parse(&raw).map_err(|e| ForgeError::Request(e.to_string()))
+        parse_web_url(&raw)
+    }
+
+    fn branch_url(&self, branch: &str) -> Result<Url> {
+        let raw = format!(
+            "{}/{}/{}/tree/{branch}",
+            self.web_base, self.owner, self.repo
+        );
+        parse_web_url(&raw)
+    }
+
+    fn pr_url(&self, number: u64) -> Result<Url> {
+        let raw = format!(
+            "{}/{}/{}/pull/{number}",
+            self.web_base, self.owner, self.repo
+        );
+        parse_web_url(&raw)
     }
 }
 
@@ -350,6 +368,25 @@ mod tests {
         assert_eq!(
             ghe.compare_url("main", "topic").unwrap().as_str(),
             "https://ghe.myhost.com/octo/demo/compare/main...topic?expand=1"
+        );
+    }
+
+    #[test]
+    fn branch_and_pr_urls_use_the_web_base() {
+        let forge = GitHubForge::new("octo", "demo", "github.com", None).unwrap();
+        assert_eq!(
+            forge.branch_url("feat/widget").unwrap().as_str(),
+            "https://github.com/octo/demo/tree/feat/widget"
+        );
+        assert_eq!(
+            forge.pr_url(42).unwrap().as_str(),
+            "https://github.com/octo/demo/pull/42"
+        );
+
+        let ghe = GitHubForge::new("octo", "demo", "ghe.myhost.com", None).unwrap();
+        assert_eq!(
+            ghe.pr_url(7).unwrap().as_str(),
+            "https://ghe.myhost.com/octo/demo/pull/7"
         );
     }
 }

@@ -31,6 +31,7 @@ bpaf.workspace = true
 console.workspace = true
 indicatif.workspace = true
 kdl.workspace = true
+open.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 shlex.workspace = true

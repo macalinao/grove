@@ -193,6 +193,22 @@ impl Grove {
         Ok(grove_forge::build_forge(&url, &self.root, &opts)?)
     }
 
+    /// The base branch a pull request from the current worktree would target:
+    /// the configured `grove.defaults.branch` if set, else the remote's default
+    /// branch (its `HEAD`). Returns `None` when neither resolves.
+    ///
+    /// Unlike [`Grove::default_base`] this yields a plain branch name (`main`),
+    /// not a remote-qualified ref (`origin/main`), for use in forge web URLs.
+    ///
+    /// # Errors
+    /// Returns a git error if the remote's default branch cannot be read.
+    pub fn base_branch(&self) -> Result<Option<String>> {
+        if let Some(b) = &self.config.default_branch {
+            return Ok(Some(b.clone()));
+        }
+        Ok(self.repo.remote_head_branch(self.config.remote())?)
+    }
+
     /// Build the copy specification from config plus a `.worktreeinclude` file
     /// at the main worktree root (its globs merge into the file includes).
     ///
