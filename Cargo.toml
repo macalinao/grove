@@ -28,16 +28,35 @@ thiserror = "2"
 # binary completes itself; no `completion` subcommand needed).
 bpaf = { version = "0.9", features = ["derive", "autocomplete"] }
 console = "0.16"
+# `join_all` fans out per-branch forge PR lookups concurrently on the sync
+# Forge impls' current-thread runtime (`list --json`, best-effort annotation).
+futures = { version = "0.3", default-features = false, features = ["std"] }
 # `ignore` gives `.worktreeinclude` (and copy globs) real gitignore semantics
 # (anchoring, `!` negation, directory patterns).
 ignore = "0.4"
 indicatif = "0.17"
 kdl = "6"
+# Opens `grove pr` / `grove open` compare/branch/PR URLs in the default browser
+# (shells out to the platform opener: xdg-open / open / start).
+open = "5"
+# Native GitHub forge client. Default features use hyper + rustls (no OpenSSL),
+# keeping grove a single static binary.
+octocrab = "0.53"
+# Thin native HTTP client for the Gitea forge (/api/v1). rustls (no OpenSSL) so
+# grove stays a single static binary; `json` for typed response bodies.
+reqwest = { version = "0.12", default-features = false, features = [
+    "rustls-tls",
+    "json",
+] }
 reflink-copy = "0.1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+# Parses `gh` `hosts.yml` and `tea` `config.yml` for zero-login token discovery.
+serde_yaml = "0.9"
 sha2 = "0.10"
 shlex = "1"
+# Current-thread runtime the sync Forge impls `block_on` octocrab with.
+tokio = { version = "1", features = ["rt", "net", "time"] }
 
 # Dev-only
 tempfile = "3"
@@ -50,6 +69,16 @@ strip = true
 pedantic = { level = "warn", priority = -1 }
 complexity = { level = "deny", priority = -1 }
 must_use_candidate = "allow"
+# Noisy pedantic lints intentionally allowed workspace-wide:
+# - `struct_excessive_bools`: bpaf CLI arg structs and git porcelain flags map
+#   one bool per switch/flag; grouping them would obscure the mapping.
+# - `needless_pass_by_value`: command `execute(args)` handlers take their parsed
+#   args by value by dispatch convention.
+# - `unnecessary_wraps`: command handlers share a uniform `-> Result<()>`
+#   signature even when a given handler is currently infallible.
+struct_excessive_bools = "allow"
+needless_pass_by_value = "allow"
+unnecessary_wraps = "allow"
 unwrap_used = "deny"
 std_instead_of_alloc = "deny"
 std_instead_of_core = "deny"

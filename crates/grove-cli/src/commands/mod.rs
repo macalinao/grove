@@ -12,7 +12,9 @@ pub mod init;
 pub mod list;
 pub mod mv;
 pub mod new;
+pub mod open;
 pub mod post_cd;
+pub mod pr;
 pub mod rm;
 pub mod run;
 pub mod tasks;
@@ -71,6 +73,12 @@ pub enum Command {
     /// Remove worktrees whose PRs are merged or closed
     Clean(#[bpaf(external(clean::clean))] clean::Clean),
 
+    /// Open the create-PR / compare page for the current branch
+    Pr(#[bpaf(external(pr::pr))] pr::Pr),
+
+    /// Open the current branch (or its PR) on the forge
+    Open(#[bpaf(external(open::open))] open::Open),
+
     /// Rename a worktree and its branch
     Mv(#[bpaf(external(mv::mv))] mv::Mv),
 
@@ -108,6 +116,8 @@ pub fn execute(cmd: Command) -> Result<()> {
         Command::Trust(args) => trust::execute(&args),
         Command::Rm(args) => rm::execute(&args),
         Command::Clean(args) => clean::execute(&args),
+        Command::Pr(args) => pr::execute(&args),
+        Command::Open(args) => open::execute(&args),
         Command::Mv(args) => mv::execute(&args),
         Command::PostCd(args) => post_cd::execute(&args),
         Command::Init(args) => init::execute(&args),

@@ -151,6 +151,12 @@ fn apply_groveconfig(cfg: &mut Config, path: &Path) {
     if let Some(v) = get("grove.provider") {
         cfg.provider = Some(v);
     }
+    if let Some(v) = get("grove.forge.host") {
+        cfg.forge_host = Some(v);
+    }
+    if let Some(v) = get("grove.forge.token") {
+        cfg.forge_token = Some(v);
+    }
     set_if_present(&mut cfg.copy_include, get_all("grove.copy.include"));
     set_if_present(&mut cfg.copy_exclude, get_all("grove.copy.exclude"));
     set_if_present(

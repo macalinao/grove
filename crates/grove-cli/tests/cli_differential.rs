@@ -23,8 +23,7 @@ fn find_gtr() -> Option<String> {
     let runs = Command::new("gtr")
         .arg("version")
         .output()
-        .map(|o| o.status.success())
-        .unwrap_or(false);
+        .is_ok_and(|o| o.status.success());
     runs.then(|| "gtr".to_string())
 }
 

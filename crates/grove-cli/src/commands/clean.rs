@@ -51,10 +51,10 @@ pub fn execute(args: &Clean) -> Result<()> {
     }
 
     let forge = grove.forge()?.ok_or_else(|| {
-        anyhow!("no forge detected for the remote; set grove.provider to github or gitlab")
+        anyhow!("no forge detected for the remote; set grove.provider to github, gitea, or gitlab")
     })?;
 
-    let targets = collect_targets(&grove, &forge, args)?;
+    let targets = collect_targets(&grove, forge.as_ref(), args)?;
     if targets.is_empty() {
         eprintln!("no worktrees match");
         return Ok(());

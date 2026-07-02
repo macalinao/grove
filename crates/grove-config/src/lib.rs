@@ -82,6 +82,12 @@ pub struct Config {
     pub editor_workspace: Option<String>,
     /// Forge provider override (`github` | `gitlab` | `gitea`); auto-detected otherwise.
     pub provider: Option<String>,
+    /// Base URL for a self-hosted forge (e.g. `https://gitea.myhost.com`,
+    /// `https://ghe.myhost.com`); auto-detected from the remote otherwise.
+    pub forge_host: Option<String>,
+    /// Explicit forge API token (overrides `gh`/`tea` credential discovery and
+    /// the `GROVE_FORGE_TOKEN` env var is a further override at query time).
+    pub forge_token: Option<String>,
 }
 
 /// Upstream tracking mode for branches created by `grove new`.
@@ -171,12 +177,17 @@ impl Default for Config {
             track: TrackMode::Auto,
             editor_workspace: None,
             provider: None,
+            forge_host: None,
+            forge_token: None,
         }
     }
 }
 
 impl Config {
     /// Load and merge all configuration sources for `repo`.
+    ///
+    /// # Errors
+    /// Returns an error if a configuration source cannot be read or parsed.
     pub fn load(repo: &Repo) -> Result<Config> {
         let mut cfg = Config::default();
         let root = repo
@@ -246,6 +257,12 @@ impl Config {
         }
         if let Some(v) = repo.config_get("grove.provider")? {
             self.provider = Some(v);
+        }
+        if let Some(v) = repo.config_get("grove.forge.host")? {
+            self.forge_host = Some(v);
+        }
+        if let Some(v) = repo.config_get("grove.forge.token")? {
+            self.forge_token = Some(v);
         }
         Ok(())
     }
@@ -355,6 +372,11 @@ impl Config {
         }
         push_scalar(&mut defaults, "provider", self.provider.as_deref());
         push_block(&mut out, "defaults", &defaults);
+
+        let mut forge = Vec::new();
+        push_scalar(&mut forge, "host", self.forge_host.as_deref());
+        push_scalar(&mut forge, "token", self.forge_token.as_deref());
+        push_block(&mut out, "forge", &forge);
 
         let mut ui = Vec::new();
         if self.color != ColorChoice::Auto {
@@ -487,6 +509,8 @@ mod kdl_roundtrip_tests {
             track: TrackMode::Remote,
             editor_workspace: Some("code".into()),
             provider: Some("github".into()),
+            forge_host: Some("https://ghe.myhost.com".into()),
+            forge_token: Some("ghp_example".into()),
         };
 
         let kdl = original.to_kdl();

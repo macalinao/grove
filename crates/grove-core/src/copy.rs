@@ -52,8 +52,7 @@ pub fn reflink_support(from: &Path, to: &Path) -> ReflinkSupport {
 fn probe_nonce() -> u128 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_nanos())
-        .unwrap_or(0)
+        .map_or(0, |d| d.as_nanos())
         ^ u128::from(std::process::id())
 }
 

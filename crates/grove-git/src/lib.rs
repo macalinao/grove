@@ -71,12 +71,19 @@ pub struct Repo {
 
 impl Repo {
     /// Discover the repository containing the current directory.
+    ///
+    /// # Errors
+    /// Returns [`GitError`] if the current directory can't be read or is not
+    /// inside a git repository.
     pub fn discover() -> Result<Repo> {
         let cwd = std::env::current_dir().map_err(GitError::Cwd)?;
         Repo::discover_from(&cwd)
     }
 
     /// Discover the repository containing `dir`.
+    ///
+    /// # Errors
+    /// Returns [`GitError::NotARepo`] if `dir` is not inside a git worktree.
     pub fn discover_from(dir: &Path) -> Result<Repo> {
         let toplevel =
             run_git(dir, &["rev-parse", "--show-toplevel"]).map_err(|_| GitError::NotARepo)?;
@@ -92,6 +99,10 @@ impl Repo {
     }
 
     /// Run a git subcommand in this repo, returning trimmed stdout.
+    ///
+    /// # Errors
+    /// Returns [`GitError`] if `git` cannot be spawned or the subcommand exits
+    /// non-zero.
     pub fn git(&self, args: &[&str]) -> Result<String> {
         run_git(&self.cwd, args)
     }
@@ -114,6 +125,10 @@ impl Repo {
     }
 
     /// The primary (first) worktree of the repository.
+    ///
+    /// # Errors
+    /// Returns [`GitError`] if listing worktrees fails, or
+    /// [`GitError::NoWorktrees`] if the repository has none.
     pub fn main_worktree(&self) -> Result<PathBuf> {
         self.worktrees()?
             .into_iter()
@@ -123,12 +138,19 @@ impl Repo {
     }
 
     /// All worktrees, in git's listing order (primary first).
+    ///
+    /// # Errors
+    /// Returns [`GitError`] if `git worktree list` cannot be run.
     pub fn worktrees(&self) -> Result<Vec<Worktree>> {
         let out = self.git(&["worktree", "list", "--porcelain"])?;
         Ok(parse_worktrees(&out))
     }
 
     /// Read a git config value, returning `None` if unset.
+    ///
+    /// # Errors
+    /// Returns [`GitError`] if `git` cannot be spawned or fails for a reason
+    /// other than the key being absent.
     pub fn config_get(&self, key: &str) -> Result<Option<String>> {
         let output = Command::new("git")
             .current_dir(&self.cwd)
@@ -281,16 +303,25 @@ impl Repo {
     }
 
     /// Does a local branch named `branch` exist?
+    ///
+    /// # Errors
+    /// Returns [`GitError`] if `git rev-parse` cannot be spawned.
     pub fn branch_exists(&self, branch: &str) -> Result<bool> {
         self.ref_exists(&format!("refs/heads/{branch}"))
     }
 
     /// Does the remote-tracking branch `<remote>/<branch>` exist?
+    ///
+    /// # Errors
+    /// Returns [`GitError`] if `git rev-parse` cannot be spawned.
     pub fn remote_branch_exists(&self, remote: &str, branch: &str) -> Result<bool> {
         self.ref_exists(&format!("refs/remotes/{remote}/{branch}"))
     }
 
     /// Does `spec` resolve to an existing ref or commit (quietly)?
+    ///
+    /// # Errors
+    /// Returns [`GitError`] if `git rev-parse` cannot be spawned.
     pub fn has_ref(&self, spec: &str) -> Result<bool> {
         self.ref_exists(spec)
     }
@@ -309,6 +340,9 @@ impl Repo {
     }
 
     /// The short name of the currently checked-out branch, if not detached.
+    ///
+    /// # Errors
+    /// Returns [`GitError`] if `git symbolic-ref` cannot be spawned.
     pub fn current_branch(&self) -> Result<Option<String>> {
         let output = Command::new("git")
             .current_dir(&self.cwd)
@@ -328,6 +362,9 @@ impl Repo {
     }
 
     /// The default branch of `remote` (its HEAD), e.g. `main`, if known.
+    ///
+    /// # Errors
+    /// Returns [`GitError`] if `git symbolic-ref` cannot be spawned.
     pub fn remote_head_branch(&self, remote: &str) -> Result<Option<String>> {
         let spec = format!("refs/remotes/{remote}/HEAD");
         let output = Command::new("git")
@@ -348,6 +385,9 @@ impl Repo {
     }
 
     /// The configured URL of `remote` (`git remote get-url <remote>`), if any.
+    ///
+    /// # Errors
+    /// Returns [`GitError`] if `git remote get-url` cannot be spawned.
     pub fn remote_url(&self, remote: &str) -> Result<Option<String>> {
         let output = Command::new("git")
             .current_dir(&self.cwd)
@@ -368,6 +408,9 @@ impl Repo {
 
     /// Prune worktree registry entries whose directories are gone
     /// (`git worktree prune`).
+    ///
+    /// # Errors
+    /// Returns [`GitError`] if `git worktree prune` cannot be run.
     pub fn worktree_prune(&self) -> Result<()> {
         self.git(&["worktree", "prune"])?;
         Ok(())
@@ -383,7 +426,22 @@ impl Repo {
         Ok(())
     }
 
+    /// Fetch a single `refspec` from `remote` (a remote name or a URL), e.g.
+    /// `refs/pull/42/head:refs/heads/pr-42`. Fetching a PR/MR head ref directly
+    /// makes fork and cross-repo checkout work without adding a remote.
+    ///
+    /// # Errors
+    /// Returns [`GitError`] if `git fetch` cannot be spawned or the fetch fails
+    /// (e.g. the ref doesn't exist or the network is unavailable).
+    pub fn fetch_ref(&self, remote: &str, refspec: &str) -> Result<()> {
+        self.git(&["fetch", remote, refspec])?;
+        Ok(())
+    }
+
     /// Set the upstream of local `branch` to `upstream` (`<remote>/<name>`).
+    ///
+    /// # Errors
+    /// Returns [`GitError`] if the `git branch --set-upstream-to` command fails.
     pub fn set_upstream(&self, branch: &str, upstream: &str) -> Result<()> {
         self.git(&["branch", &format!("--set-upstream-to={upstream}"), branch])?;
         Ok(())
@@ -393,6 +451,9 @@ impl Repo {
     ///
     /// If `create_branch`, runs `git worktree add -b <branch> <path> [base]`;
     /// otherwise checks out the existing `branch` into the new worktree.
+    ///
+    /// # Errors
+    /// Returns [`GitError`] if `git worktree add` fails.
     pub fn add_worktree(
         &self,
         path: &Path,
@@ -422,6 +483,9 @@ impl Repo {
     }
 
     /// Remove the worktree at `path`.
+    ///
+    /// # Errors
+    /// Returns [`GitError`] if `git worktree remove` fails.
     pub fn remove_worktree(&self, path: &Path, force: bool) -> Result<()> {
         let path = path.to_string_lossy().into_owned();
         let mut args = vec!["worktree", "remove"];
@@ -434,6 +498,9 @@ impl Repo {
     }
 
     /// Move the worktree at `from` to `to`.
+    ///
+    /// # Errors
+    /// Returns [`GitError`] if `git worktree move` fails.
     pub fn move_worktree(&self, from: &Path, to: &Path, force: bool) -> Result<()> {
         let from = from.to_string_lossy().into_owned();
         let to = to.to_string_lossy().into_owned();
@@ -448,12 +515,18 @@ impl Repo {
     }
 
     /// Rename a branch (`git branch -m old new`).
+    ///
+    /// # Errors
+    /// Returns [`GitError`] if `git branch -m` fails.
     pub fn rename_branch(&self, old: &str, new: &str) -> Result<()> {
         self.git(&["branch", "-m", old, new])?;
         Ok(())
     }
 
     /// Delete a branch (`git branch -D name`).
+    ///
+    /// # Errors
+    /// Returns [`GitError`] if `git branch -D` fails.
     pub fn delete_branch(&self, branch: &str) -> Result<()> {
         self.git(&["branch", "-D", branch])?;
         Ok(())

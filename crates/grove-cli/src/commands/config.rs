@@ -83,7 +83,7 @@ pub fn execute(args: &Config) -> Result<()> {
 /// mutually exclusive combinations.
 fn resolve_scope(args: &Config) -> Result<ConfigScope> {
     match (args.local, args.global, args.system) {
-        (false, false, false) | (true, false, false) => Ok(ConfigScope::Local),
+        (false | true, false, false) => Ok(ConfigScope::Local),
         (false, true, false) => Ok(ConfigScope::Global),
         (false, false, true) => Ok(ConfigScope::System),
         _ => Err(anyhow!("choose at most one of --local, --global, --system")),

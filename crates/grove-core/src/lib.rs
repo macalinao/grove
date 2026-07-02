@@ -10,10 +10,14 @@ use std::path::{Path, PathBuf};
 pub use grove_config::{
     Config, ConfigError, TrackMode, TrustStatus, is_trusted, record_trust, trust_status,
 };
-pub use grove_forge::{CliForge, Forge, ForgeError, PrInfo, PrState, Provider};
+pub use grove_forge::{
+    CliForge, Forge, ForgeError, ForgeRef, ForgeUrl, ForgeUrlKind, Issue, PrInfo, PrState,
+    Provider, Url,
+};
 pub use grove_git::{ConfigScope, GitError, Repo, Worktree};
 
 pub mod copy;
+pub mod refs;
 
 pub use copy::{
     CopySpec, ReflinkSupport, copy_dirs, copy_files, copy_into, read_worktreeinclude,
@@ -29,8 +33,14 @@ pub enum CoreError {
     #[error(transparent)]
     Config(#[from] ConfigError),
 
+    #[error(transparent)]
+    Forge(#[from] ForgeError),
+
     #[error("no worktree matching '{0}'")]
     NotFound(String),
+
+    #[error("no worktree for {0} yet — create one with `grove new {0}`")]
+    NoWorktreeForRef(String),
 
     #[error("--track: {0}")]
     Track(String),
@@ -109,11 +119,18 @@ pub struct RemoveOpts {
 
 impl Grove {
     /// Discover the repo from the current directory and load configuration.
+    ///
+    /// # Errors
+    /// Returns an error if no git repository is found or its config fails to load.
     pub fn open() -> Result<Grove> {
         let repo = Repo::discover()?;
         Grove::with_repo(repo)
     }
 
+    /// Build a [`Grove`] for an already-discovered `repo`, loading its config.
+    ///
+    /// # Errors
+    /// Returns an error if configuration fails to load.
     pub fn with_repo(repo: Repo) -> Result<Grove> {
         let config = Config::load(&repo)?;
         let root = repo
@@ -129,6 +146,9 @@ impl Grove {
     }
 
     /// All worktrees in the repository.
+    ///
+    /// # Errors
+    /// Returns an error if listing worktrees via git fails.
     pub fn list(&self) -> Result<Vec<Worktree>> {
         Ok(self.repo.worktrees()?)
     }
@@ -157,16 +177,43 @@ impl Grove {
     ///
     /// Returns `None` when the remote has no URL or its host isn't a known
     /// provider and none is configured.
-    pub fn forge(&self) -> Result<Option<CliForge>> {
-        let url = self.repo.remote_url(self.config.remote())?;
-        let provider = url
-            .as_deref()
-            .and_then(|u| grove_forge::detect(u, self.config.provider.as_deref()));
-        Ok(provider.map(|p| CliForge::new(p, &self.root)))
+    ///
+    /// # Errors
+    /// Returns an error if the remote URL cannot be read or the forge client
+    /// cannot be built.
+    pub fn forge(&self) -> Result<Option<Box<dyn Forge>>> {
+        let Some(url) = self.repo.remote_url(self.config.remote())? else {
+            return Ok(None);
+        };
+        let opts = grove_forge::ForgeOptions {
+            provider: self.config.provider.as_deref(),
+            host: self.config.forge_host.as_deref(),
+            token: self.config.forge_token.as_deref(),
+        };
+        Ok(grove_forge::build_forge(&url, &self.root, &opts)?)
+    }
+
+    /// The base branch a pull request from the current worktree would target:
+    /// the configured `grove.defaults.branch` if set, else the remote's default
+    /// branch (its `HEAD`). Returns `None` when neither resolves.
+    ///
+    /// Unlike [`Grove::default_base`] this yields a plain branch name (`main`),
+    /// not a remote-qualified ref (`origin/main`), for use in forge web URLs.
+    ///
+    /// # Errors
+    /// Returns a git error if the remote's default branch cannot be read.
+    pub fn base_branch(&self) -> Result<Option<String>> {
+        if let Some(b) = &self.config.default_branch {
+            return Ok(Some(b.clone()));
+        }
+        Ok(self.repo.remote_head_branch(self.config.remote())?)
     }
 
     /// Build the copy specification from config plus a `.worktreeinclude` file
     /// at the main worktree root (its globs merge into the file includes).
+    ///
+    /// # Errors
+    /// Returns an error if the `.worktreeinclude` file cannot be read.
     pub fn copy_spec(&self) -> Result<CopySpec> {
         let mut include = self.config.copy_include.clone();
         include.extend(read_worktreeinclude(&self.root)?);
@@ -181,6 +228,9 @@ impl Grove {
     /// Find an existing worktree by branch name or folder name.
     ///
     /// The special name `1` resolves to the main worktree (matching gtr).
+    ///
+    /// # Errors
+    /// Returns an error if listing worktrees via git fails.
     pub fn find(&self, name: &str) -> Result<Option<Worktree>> {
         if name == "1" {
             return Ok(self.list()?.into_iter().find(|w| w.path == self.root));
@@ -194,6 +244,10 @@ impl Grove {
     }
 
     /// Resolve a worktree path by branch/folder name, erroring if not found.
+    ///
+    /// # Errors
+    /// Returns [`CoreError::NotFound`] if no matching worktree exists, or a git
+    /// error if listing worktrees fails.
     pub fn path_for(&self, name: &str) -> Result<PathBuf> {
         self.find(name)?
             .map(|w| w.path)
@@ -201,6 +255,9 @@ impl Grove {
     }
 
     /// Create a new worktree. Returns its path.
+    ///
+    /// # Errors
+    /// Returns an error if branch resolution or `git worktree add` fails.
     pub fn create(&self, name: &str, opts: &CreateOpts) -> Result<PathBuf> {
         let branch = opts.branch.clone().unwrap_or_else(|| name.to_string());
         let folder = self.resolve_folder(&branch, opts);
@@ -251,6 +308,9 @@ impl Grove {
     /// gtr's `--track` case structure (`auto`/`remote`/`local`/`none`).
     ///
     /// Returns `(create_branch, base)` for [`grove_git::Repo::add_worktree`].
+    // The `None` and `Auto` fallthrough arms share a body but are kept distinct
+    // to mirror gtr's documented `--track` case structure.
+    #[allow(clippy::match_same_arms)]
     fn plan_branch(
         &self,
         branch: &str,
@@ -281,18 +341,18 @@ impl Grove {
             // `none` ignores a same-named remote branch and branches off the
             // resolved from-ref.
             TrackMode::None if local => Ok((false, None)),
-            TrackMode::None => Ok((true, self.from_ref(remote, opts)?)),
+            TrackMode::None => Ok((true, self.resolve_from_ref(remote, opts)?)),
             // `auto`: track an existing remote branch, reuse an existing local
             // branch, else create a new one from the from-ref.
             TrackMode::Auto if remote_b && !local => Ok((true, Some(remote_ref))),
             TrackMode::Auto if local => Ok((false, None)),
-            TrackMode::Auto => Ok((true, self.from_ref(remote, opts)?)),
+            TrackMode::Auto => Ok((true, self.resolve_from_ref(remote, opts)?)),
         }
     }
 
     /// The start point for a brand-new branch: `--from-current` HEAD, an explicit
     /// `--from`, else the remote's default branch (or `None` → git uses HEAD).
-    fn from_ref(&self, remote: &str, opts: &CreateOpts) -> Result<Option<String>> {
+    fn resolve_from_ref(&self, remote: &str, opts: &CreateOpts) -> Result<Option<String>> {
         if opts.from_current {
             return Ok(self.repo.current_branch()?);
         }
@@ -322,6 +382,10 @@ impl Grove {
     }
 
     /// Remove a worktree (and optionally its branch).
+    ///
+    /// # Errors
+    /// Returns [`CoreError::NotFound`] if the worktree doesn't exist, or a git
+    /// error if removal fails.
     pub fn remove(&self, name: &str, opts: &RemoveOpts) -> Result<()> {
         let wt = self
             .find(name)?
@@ -336,6 +400,10 @@ impl Grove {
     }
 
     /// Rename a worktree and its branch. Returns the new path.
+    ///
+    /// # Errors
+    /// Returns [`CoreError::NotFound`] if the worktree doesn't exist, or a git
+    /// error if the move or branch rename fails.
     pub fn rename(&self, old: &str, new: &str, force: bool) -> Result<PathBuf> {
         let wt = self
             .find(old)?
@@ -367,10 +435,62 @@ pub fn sanitize(branch: &str) -> String {
     replaced.trim_matches('-').to_string()
 }
 
+/// Turn an issue title into a lowercase, hyphen-separated branch slug.
+///
+/// Runs of non-alphanumeric characters collapse to a single `-`, the result is
+/// trimmed of leading/trailing `-`, and it is capped at [`SLUG_MAX`] bytes (on a
+/// hyphen boundary) so a long title yields a sensible branch name.
+#[must_use]
+pub fn slugify(title: &str) -> String {
+    let mut slug = String::new();
+    let mut prev_dash = true; // suppress a leading dash
+    for c in title.chars() {
+        if c.is_ascii_alphanumeric() {
+            slug.extend(c.to_lowercase());
+            prev_dash = false;
+        } else if !prev_dash {
+            slug.push('-');
+            prev_dash = true;
+        }
+    }
+    let slug = slug.trim_matches('-');
+    truncate_slug(slug).to_string()
+}
+
+/// Maximum slug length in bytes (before trailing-hyphen trimming).
+const SLUG_MAX: usize = 50;
+
+/// Truncate `slug` to at most [`SLUG_MAX`] bytes, preferring a hyphen boundary,
+/// then trimming any trailing `-`.
+fn truncate_slug(slug: &str) -> &str {
+    if slug.len() <= SLUG_MAX {
+        return slug;
+    }
+    let cut = slug[..SLUG_MAX].rfind('-').unwrap_or(SLUG_MAX);
+    slug[..cut].trim_end_matches('-')
+}
+
 #[cfg(test)]
 #[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn slugifies_titles() {
+        assert_eq!(slugify("Widgets should wobble"), "widgets-should-wobble");
+        assert_eq!(slugify("Fix: the #1 bug!!!"), "fix-the-1-bug");
+        assert_eq!(slugify("  leading/trailing  "), "leading-trailing");
+        assert_eq!(slugify("***"), "");
+    }
+
+    #[test]
+    fn slug_is_length_capped_on_a_hyphen_boundary() {
+        let long = "one two three four five six seven eight nine ten eleven twelve";
+        let slug = slugify(long);
+        assert!(slug.len() <= SLUG_MAX, "slug too long: {slug}");
+        assert!(!slug.ends_with('-'));
+        assert!(slug.starts_with("one-two-three"));
+    }
 
     #[test]
     fn sanitizes_slashes() {

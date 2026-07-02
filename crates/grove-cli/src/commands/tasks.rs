@@ -119,7 +119,7 @@ fn print_summary(report: &RunReport) {
             TaskStatus::Success => println!("{} {name}", style("✓").green()),
             TaskStatus::Failed(msg) => println!("{} {name}: {msg}", style("✗").red()),
             TaskStatus::Skipped => {
-                println!("{} {name} {}", style("•").dim(), style("(skipped)").dim())
+                println!("{} {name} {}", style("•").dim(), style("(skipped)").dim());
             }
         }
     }

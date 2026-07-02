@@ -108,6 +108,9 @@ pub trait Adapter {
     /// Canonical adapter name (e.g. `cursor`).
     fn name(&self) -> &str;
     /// Build the argv to launch this tool against `worktree`.
+    ///
+    /// # Errors
+    /// Returns [`AdapterError`] if the launch command cannot be built.
     fn command(&self, worktree: &Path, extra_args: &[String]) -> Result<Vec<String>>;
 }
 

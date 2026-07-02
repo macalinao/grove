@@ -7,6 +7,7 @@
 
 use anyhow::Result;
 
+mod browser;
 mod commands;
 mod complete;
 mod hooks;
