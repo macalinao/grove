@@ -14,15 +14,17 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 pub mod auth;
+mod gitea;
 mod github;
 
-pub use auth::{TeaLogin, gitea_token, github_token};
+pub use auth::{TeaLogin, gitea_token, github_token, tea_login};
+pub use gitea::GiteaForge;
 pub use github::GitHubForge;
 
 /// Errors from forge queries.
 #[derive(thiserror::Error, Debug)]
 pub enum ForgeError {
-    #[error("no forge detected for this remote (set grove.provider to github or gitlab)")]
+    #[error("no forge detected for this remote (set grove.provider to github, gitea, or gitlab)")]
     NotConfigured,
 
     #[error("the {0} CLI is required but was not found on PATH")]
@@ -54,6 +56,7 @@ pub struct PrInfo {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Provider {
     GitHub,
+    Gitea,
     GitLab,
 }
 
@@ -63,16 +66,19 @@ impl Provider {
     pub fn parse(s: &str) -> Option<Provider> {
         match s.to_ascii_lowercase().as_str() {
             "github" => Some(Provider::GitHub),
+            "gitea" | "forgejo" | "codeberg" => Some(Provider::Gitea),
             "gitlab" => Some(Provider::GitLab),
             _ => None,
         }
     }
 
-    /// The CLI this provider is queried through.
+    /// The CLI associated with this provider. GitHub and Gitea are served
+    /// natively over HTTP, so this only steers the [`CliForge`] (`glab`) path.
     #[must_use]
     pub fn cli(self) -> &'static str {
         match self {
             Provider::GitHub => "gh",
+            Provider::Gitea => "tea",
             Provider::GitLab => "glab",
         }
     }
@@ -88,17 +94,27 @@ pub trait Forge {
     fn pr_for_branch(&self, branch: &str) -> Result<Option<PrInfo>>;
 }
 
-/// Detect the provider for `remote_url`, honoring an explicit `override_` first.
+/// Detect the provider for `remote_url`, honoring an explicit `override_` first,
+/// then falling back to host-name heuristics on the remote.
+///
+/// This is pure (no network, no config reads); [`build_forge`] layers the
+/// `tea`-login match and the `/api/v1/version` probe on top.
 #[must_use]
 pub fn detect(remote_url: &str, override_: Option<&str>) -> Option<Provider> {
     if let Some(p) = override_.and_then(Provider::parse) {
         return Some(p);
     }
-    let host = host_of(remote_url);
+    provider_from_host(&host_of(remote_url))
+}
+
+/// Guess a provider from a host name (`github`/`gitlab`/`gitea`-family).
+fn provider_from_host(host: &str) -> Option<Provider> {
     if host.contains("github") {
         Some(Provider::GitHub)
     } else if host.contains("gitlab") {
         Some(Provider::GitLab)
+    } else if host.contains("gitea") || host.contains("forgejo") || host.contains("codeberg") {
+        Some(Provider::Gitea)
     } else {
         None
     }
@@ -128,16 +144,85 @@ pub fn build_forge(
     dir: &Path,
     opts: &ForgeOptions,
 ) -> Result<Option<Box<dyn Forge>>> {
-    let Some(provider) = detect(remote_url, opts.provider) else {
+    let Some(provider) = resolve_provider(remote_url, opts) else {
         return Ok(None);
     };
     match provider {
-        Provider::GitHub => {
-            let forge = build_github(remote_url, opts)?;
-            Ok(Some(Box::new(forge)))
-        }
+        Provider::GitHub => Ok(Some(Box::new(build_github(remote_url, opts)?))),
+        Provider::Gitea => Ok(Some(Box::new(build_gitea(remote_url, opts)?))),
         Provider::GitLab => Ok(Some(Box::new(CliForge::new(provider, dir)))),
     }
+}
+
+/// Resolve the provider for `remote_url` using every available signal, in
+/// order: explicit override / host heuristic ([`detect`]), then a matching
+/// `tea` login (which also supplies the host), then a `/api/v1/version` probe
+/// of the configured/remote host (Gitea's version endpoint).
+fn resolve_provider(remote_url: &str, opts: &ForgeOptions) -> Option<Provider> {
+    if let Some(p) = detect(remote_url, opts.provider) {
+        return Some(p);
+    }
+    let host = forge_host(remote_url, opts);
+    if tea_login(&host).is_some() {
+        return Some(Provider::Gitea);
+    }
+    probe_gitea(&host).then_some(Provider::Gitea)
+}
+
+/// The host to reach the forge at: `grove.forge.host` if set, else the remote.
+fn forge_host(remote_url: &str, opts: &ForgeOptions) -> String {
+    opts.host
+        .filter(|h| !h.is_empty())
+        .map_or_else(|| host_of(remote_url), host_of)
+}
+
+/// Probe `GET {host}/api/v1/version` — a Gitea-specific endpoint — returning
+/// `true` when it answers successfully. Best-effort with a short timeout; any
+/// error (unreachable host, non-Gitea server, timeout) yields `false`.
+fn probe_gitea(host: &str) -> bool {
+    let Ok(runtime) = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+    else {
+        return false;
+    };
+    runtime.block_on(async {
+        let Ok(client) = reqwest::Client::builder()
+            .timeout(core::time::Duration::from_secs(3))
+            .build()
+        else {
+            return false;
+        };
+        let url = format!("{}/version", gitea::api_base(host));
+        client
+            .get(&url)
+            .send()
+            .await
+            .is_ok_and(|r| r.status().is_success())
+    })
+}
+
+/// Construct the native Gitea forge, resolving the base URL, token, and
+/// `insecure` flag from `grove.*` config plus any matching `tea` login.
+fn build_gitea(remote_url: &str, opts: &ForgeOptions) -> Result<GiteaForge> {
+    let (owner, repo) = owner_repo(remote_url).ok_or(ForgeError::NotConfigured)?;
+    let origin_host = host_of(remote_url);
+    let login = tea_login(&origin_host);
+    // Base host precedence: `grove.forge.host` → the `tea` login URL → origin.
+    let host = opts
+        .host
+        .filter(|h| !h.is_empty())
+        .map(str::to_string)
+        .or_else(|| {
+            login
+                .as_ref()
+                .map(|l| l.url.clone())
+                .filter(|u| !u.is_empty())
+        })
+        .unwrap_or_else(|| origin_host.clone());
+    let token = gitea_token(&origin_host, opts.token);
+    let insecure = login.is_some_and(|l| l.insecure);
+    GiteaForge::new(&owner, &repo, &host, token, insecure)
 }
 
 /// Construct the native GitHub forge, resolving auth from config + `gh` creds.
@@ -234,37 +319,42 @@ impl Forge for CliForge {
     }
 
     fn pr_for_branch(&self, branch: &str) -> Result<Option<PrInfo>> {
-        let out = match self.provider {
-            Provider::GitHub => self.run(&[
-                "pr",
-                "list",
-                "--head",
-                branch,
-                "--state",
-                "all",
-                "-L",
-                "1",
-                "--json",
-                "state,baseRefName",
-                "--jq",
-                r#".[] | "\(.state)\t\(.baseRefName)""#,
-            ])?,
-            Provider::GitLab => self.run(&[
-                "mr",
-                "list",
-                "--source-branch",
-                branch,
-                "--all",
-                "-P",
-                "1",
-                "-F",
-                "tsv",
-            ])?,
-        };
-        Ok(match self.provider {
-            Provider::GitHub => parse_gh(&out),
-            Provider::GitLab => parse_glab(&out),
-        })
+        match self.provider {
+            Provider::GitHub => {
+                let out = self.run(&[
+                    "pr",
+                    "list",
+                    "--head",
+                    branch,
+                    "--state",
+                    "all",
+                    "-L",
+                    "1",
+                    "--json",
+                    "state,baseRefName",
+                    "--jq",
+                    r#".[] | "\(.state)\t\(.baseRefName)""#,
+                ])?;
+                Ok(parse_gh(&out))
+            }
+            Provider::GitLab => {
+                let out = self.run(&[
+                    "mr",
+                    "list",
+                    "--source-branch",
+                    branch,
+                    "--all",
+                    "-P",
+                    "1",
+                    "-F",
+                    "tsv",
+                ])?;
+                Ok(parse_glab(&out))
+            }
+            // GitHub and Gitea are served natively; a `CliForge` is only ever
+            // built for GitLab, so this arm is unreachable in practice.
+            Provider::Gitea => Err(ForgeError::CliMissing("tea")),
+        }
     }
 }
 
@@ -328,12 +418,34 @@ mod tests {
             detect("https://gitlab.com/o/r.git", None),
             Some(Provider::GitLab)
         );
+        assert_eq!(
+            detect("https://gitea.myhost.com/o/r.git", None),
+            Some(Provider::Gitea)
+        );
+        assert_eq!(
+            detect("git@codeberg.org:o/r.git", None),
+            Some(Provider::Gitea)
+        );
         assert_eq!(detect("https://example.com/o/r", None), None);
         // Explicit override wins over the URL.
         assert_eq!(
             detect("https://example.com/o/r", Some("github")),
             Some(Provider::GitHub)
         );
+        assert_eq!(
+            detect("https://example.com/o/r", Some("gitea")),
+            Some(Provider::Gitea)
+        );
+    }
+
+    #[test]
+    fn parses_provider_override_values() {
+        assert_eq!(Provider::parse("gitea"), Some(Provider::Gitea));
+        assert_eq!(Provider::parse("Forgejo"), Some(Provider::Gitea));
+        assert_eq!(Provider::parse("codeberg"), Some(Provider::Gitea));
+        assert_eq!(Provider::parse("GitHub"), Some(Provider::GitHub));
+        assert_eq!(Provider::parse("gitlab"), Some(Provider::GitLab));
+        assert_eq!(Provider::parse("bitbucket"), None);
     }
 
     #[test]

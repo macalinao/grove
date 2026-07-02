@@ -36,6 +36,12 @@ kdl = "6"
 # Native GitHub forge client. Default features use hyper + rustls (no OpenSSL),
 # keeping grove a single static binary.
 octocrab = "0.53"
+# Thin native HTTP client for the Gitea forge (/api/v1). rustls (no OpenSSL) so
+# grove stays a single static binary; `json` for typed response bodies.
+reqwest = { version = "0.12", default-features = false, features = [
+    "rustls-tls",
+    "json",
+] }
 reflink-copy = "0.1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

@@ -13,6 +13,7 @@ workspace = true
 
 [dependencies]
 octocrab.workspace = true
+reqwest.workspace = true
 serde = { workspace = true }
 serde_yaml.workspace = true
 thiserror.workspace = true

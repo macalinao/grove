@@ -153,6 +153,17 @@ pub fn gitea_token(host: &str, explicit: Option<&str>) -> Option<String> {
     tea_login_for_host(&tea_logins(), &host).map(|l| l.token.clone())
 }
 
+/// The `tea` login whose URL host matches `host`, if any.
+///
+/// Detection and the native Gitea client use this to recover the instance's
+/// base URL and its `insecure` TLS flag straight from a `tea login`, so a
+/// Gitea repo often needs no `grove.forge.host` config at all.
+#[must_use]
+pub fn tea_login(host: &str) -> Option<TeaLogin> {
+    let host = host_of(host);
+    tea_login_for_host(&tea_logins(), &host).cloned()
+}
+
 /// The `tea` config search path: `XDG_CONFIG_HOME/tea/config.yml` (default
 /// `~/.config/tea/config.yml`) then the legacy `~/.tea/tea.yml`.
 fn tea_config_paths() -> Vec<PathBuf> {
