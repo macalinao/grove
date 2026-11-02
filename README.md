@@ -22,7 +22,7 @@ are wired in. Per-branch databases (`grove-db`) remain a later milestone. See
 the design spec in the Obsidian vault (`igm/grove/…`).
 
 ```sh
-cargo install grove-wt   # installs `grove` and `git-grove`
+cargo install grove-wt   # once published; installs `grove` and `git-grove`
 ```
 
 The CLI uses [`bpaf`](https://docs.rs/bpaf); shell completion is bpaf's
@@ -85,7 +85,7 @@ grove cd my-feature           # jumps into that worktree
 
 ## Workspace layout
 
-Published to crates.io as `grove-wt` / `grove-wt-*` (`grove`, `grove-cli` and
+Publishes to crates.io as `grove-wt` / `grove-wt-*` (`grove`, `grove-cli` and
 `grove-core` are taken there); in the code they're still `grove_*`.
 
 | crate (dir) | crates.io | role |
