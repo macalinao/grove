@@ -265,6 +265,15 @@ fn forge_host(remote_url: &str, opts: &ForgeOptions) -> String {
 /// Probe `GET {host}/api/v1/version` — a Gitea-specific endpoint — returning
 /// `true` when it answers successfully. Best-effort with a short timeout; any
 /// error (unreachable host, non-Gitea server, timeout) yields `false`.
+/// A `reqwest` client builder with ring installed as the process-wide rustls
+/// provider. reqwest is built with `rustls-no-provider` (see the workspace
+/// Cargo.toml) and panics on `build()` if no provider is installed.
+pub(crate) fn http_client_builder() -> reqwest::ClientBuilder {
+    // `Err` only means a provider is already installed.
+    let _ = rustls::crypto::ring::default_provider().install_default();
+    reqwest::Client::builder()
+}
+
 fn probe_gitea(host: &str) -> bool {
     let Ok(runtime) = tokio::runtime::Builder::new_current_thread()
         .enable_all()
@@ -273,7 +282,7 @@ fn probe_gitea(host: &str) -> bool {
         return false;
     };
     runtime.block_on(async {
-        let Ok(client) = reqwest::Client::builder()
+        let Ok(client) = http_client_builder()
             .timeout(core::time::Duration::from_secs(3))
             .build()
         else {

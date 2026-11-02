@@ -179,7 +179,7 @@ impl Forge for GiteaForge {
 
 /// Build the `reqwest` client, disabling TLS verification when `insecure`.
 fn build_client(insecure: bool) -> Result<Client> {
-    Client::builder()
+    crate::http_client_builder()
         .danger_accept_invalid_certs(insecure)
         .build()
         .map_err(|e| ForgeError::Request(e.to_string()))

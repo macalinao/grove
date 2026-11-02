@@ -34,27 +34,41 @@ futures = { version = "0.3", default-features = false, features = ["std"] }
 # `ignore` gives `.worktreeinclude` (and copy globs) real gitignore semantics
 # (anchoring, `!` negation, directory patterns).
 ignore = "0.4"
-indicatif = "0.17"
+indicatif = "0.18"
 kdl = "6"
 # Opens `grove pr` / `grove open` compare/branch/PR URLs in the default browser
 # (shells out to the platform opener: xdg-open / open / start).
 open = "5"
 # Native GitHub forge client. Default features use hyper + rustls (no OpenSSL),
 # keeping grove a single static binary.
-octocrab = "0.53"
-# Thin native HTTP client for the Gitea forge (/api/v1). rustls (no OpenSSL) so
-# grove stays a single static binary; `json` for typed response bodies.
-reqwest = { version = "0.12", default-features = false, features = [
-    "rustls-tls",
-    "json",
+# Default features minus `jwt-aws-lc-rs` (GitHub App JWTs, unused): keeps the
+# TLS stack on ring alone.
+octocrab = { version = "0.54", default-features = false, features = [
+    "follow-redirect",
+    "retry",
+    "rustls",
+    "rustls-ring",
+    "timeout",
+    "default-client",
 ] }
+# Thin native HTTP client for the Gitea forge (/api/v1). rustls (no OpenSSL) so
+# grove stays a single static binary; `json` for typed response bodies,
+# `query` for URL query params. `rustls-no-provider` + the `rustls` ring
+# provider below: octocrab already links ring, so this avoids also building
+# aws-lc (reqwest 0.13's default rustls provider).
+reqwest = { version = "0.13", default-features = false, features = [
+    "rustls-no-provider",
+    "json",
+    "query",
+] }
+rustls = { version = "0.23", default-features = false, features = ["ring"] }
 reflink-copy = "0.1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 # Parses `gh` `hosts.yml` and `tea` `config.yml` for zero-login token discovery.
 serde_yaml = "0.9"
-sha2 = "0.10"
-shlex = "1"
+sha2 = "0.11"
+shlex = "2"
 # Current-thread runtime the sync Forge impls `block_on` octocrab with.
 tokio = { version = "1", features = ["rt", "net", "time"] }
 
@@ -76,9 +90,12 @@ must_use_candidate = "allow"
 #   args by value by dispatch convention.
 # - `unnecessary_wraps`: command handlers share a uniform `-> Result<()>`
 #   signature even when a given handler is currently infallible.
+# - `assert_is_empty`: its suggested `assert_eq!(v, [] as [T; 0])` reads worse
+#   than `assert!(v.is_empty())` in tests.
 struct_excessive_bools = "allow"
 needless_pass_by_value = "allow"
 unnecessary_wraps = "allow"
+assert_is_empty = "allow"
 unwrap_used = "deny"
 std_instead_of_alloc = "deny"
 std_instead_of_core = "deny"
