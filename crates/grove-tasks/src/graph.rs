@@ -176,6 +176,7 @@ mod tests {
             name: name.into(),
             run: TaskRun::Shell("true".into()),
             needs: needs.iter().map(|n| (*n).into()).collect(),
+            jobs: None,
         }
     }
 

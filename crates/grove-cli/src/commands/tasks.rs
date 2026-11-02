@@ -109,7 +109,16 @@ fn list_tasks(specs: &[TaskSpec]) {
         } else {
             format!("  (needs: {})", spec.needs.join(", "))
         };
-        println!("{}{}", style(&spec.name).bold(), style(needs).dim());
+        let jobs = spec
+            .jobs
+            .map(|n| format!("  (jobs: {n})"))
+            .unwrap_or_default();
+        println!(
+            "{}{}{}",
+            style(&spec.name).bold(),
+            style(needs).dim(),
+            style(jobs).dim()
+        );
     }
 }
 
@@ -140,13 +149,30 @@ impl ShellRunner {
 impl TaskRunner for ShellRunner {
     fn run(&self, task: &TaskSpec) -> core::result::Result<(), String> {
         let TaskRun::Shell(cmd) = &task.run;
-        let output = Command::new("sh")
-            .arg("-c")
-            .arg(cmd)
-            .current_dir(&self.dir)
-            .env("GROVE_WORKTREE", &self.dir)
-            .output()
-            .map_err(|e| format!("failed to spawn shell for '{}': {e}", task.name))?;
+        let shell = |jobs: Option<u32>| {
+            let mut c = match jobs {
+                Some(n) => {
+                    let mut c = Command::new("baton");
+                    c.args(["-n", &n.to_string(), "--", "sh"]);
+                    c
+                }
+                None => Command::new("sh"),
+            };
+            c.arg("-c")
+                .arg(cmd)
+                .current_dir(&self.dir)
+                .env("GROVE_WORKTREE", &self.dir)
+                .output()
+        };
+        // `jobs N` runs under `baton -n N` when batonpass is installed, and
+        // directly (with `BATON_JOBS` unset) when it isn't.
+        let output = match shell(task.jobs) {
+            Err(e) if task.jobs.is_some() && e.kind() == std::io::ErrorKind::NotFound => {
+                shell(None)
+            }
+            other => other,
+        }
+        .map_err(|e| format!("failed to spawn shell for '{}': {e}", task.name))?;
 
         let label = style(format!("[{}]", task.name)).cyan().to_string();
         let mut buf = String::new();
@@ -187,6 +213,7 @@ mod tests {
             name: name.to_owned(),
             run: TaskRun::Shell(cmd.to_owned()),
             needs: Vec::new(),
+            jobs: None,
         }
     }
 

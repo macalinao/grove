@@ -6,6 +6,7 @@
 //!     task "install" { run "bun install" }
 //!     task "build"   { run "cargo build"; needs "install" }
 //!     task "codegen" { run "bun run codegen"; needs "install" "build" }
+//!     task "test"    { run "cargo nextest run -j $BATON_JOBS"; jobs 8 }
 //! }
 //! ```
 //! A missing top-level `tasks` node (or one without children) yields an empty
@@ -44,14 +45,36 @@ fn parse_one_task(node: &KdlNode) -> Result<TaskSpec> {
         .and_then(parse_run)
         .ok_or_else(|| TasksError::Parse(format!("task '{name}' is missing a `run` command")))?;
     let needs = body.map(parse_needs).unwrap_or_default();
+    let jobs = match body.and_then(|b| b.get("jobs")) {
+        None => None,
+        Some(node) => Some(parse_jobs(node).ok_or_else(|| {
+            TasksError::Parse(format!("task '{name}': `jobs` takes a positive integer"))
+        })?),
+    };
 
-    Ok(TaskSpec { name, run, needs })
+    Ok(TaskSpec {
+        name,
+        run,
+        needs,
+        jobs,
+    })
 }
 
 /// The shell command from the task body's `run` node, if present.
 fn parse_run(body: &KdlDocument) -> Option<TaskRun> {
     let node = body.get("run")?;
     first_positional_string(node).map(TaskRun::Shell)
+}
+
+/// The positive integer argument of a `jobs N` node.
+fn parse_jobs(node: &KdlNode) -> Option<u32> {
+    let n = node
+        .entries()
+        .iter()
+        .find(|e| e.name().is_none())?
+        .value()
+        .as_integer()?;
+    u32::try_from(n).ok().filter(|n| *n > 0)
 }
 
 /// All dependency names from every `needs` node in the task body, in order.
@@ -117,6 +140,7 @@ mod tests {
                 name: "install".to_owned(),
                 run: TaskRun::Shell("bun install".to_owned()),
                 needs: vec![],
+                jobs: None,
             }]
         );
     }
@@ -195,5 +219,15 @@ mod tests {
         assert_eq!(specs.len(), 1);
         assert_eq!(specs[0].name, "install");
         assert_eq!(specs[0].needs, Vec::<String>::new());
+    }
+
+    #[test]
+    fn jobs_parses_and_rejects_non_positive() {
+        let src = r#"tasks { task "t" { run "make"; jobs 4 } }"#;
+        assert_eq!(parse(src).unwrap()[0].jobs, Some(4));
+        let src = r#"tasks { task "t" { run "make" } }"#;
+        assert_eq!(parse(src).unwrap()[0].jobs, None);
+        let src = r#"tasks { task "t" { run "make"; jobs 0 } }"#;
+        assert!(parse(src).is_err());
     }
 }

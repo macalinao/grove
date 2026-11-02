@@ -1,5 +1,5 @@
 [package]
-name = "grove-tasks"
+name = "grove-wt-tasks"
 description = "Parallel task-graph (DAG) execution for Grove worktree creation"
 version.workspace = true
 edition.workspace = true
@@ -7,9 +7,16 @@ license.workspace = true
 repository.workspace = true
 authors.workspace = true
 rust-version.workspace = true
+homepage.workspace = true
+readme.workspace = true
+keywords.workspace = true
+categories.workspace = true
 
 [lints]
 workspace = true
+
+[lib]
+name = "grove_tasks"
 
 [dependencies]
 thiserror.workspace = true

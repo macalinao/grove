@@ -243,6 +243,7 @@ mod tests {
             name: name.to_owned(),
             run: TaskRun::Shell("true".to_owned()),
             needs: Vec::new(),
+            jobs: None,
         }
     }
 

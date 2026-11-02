@@ -59,6 +59,9 @@ pub struct TaskSpec {
     pub run: TaskRun,
     /// Names of tasks that must complete before this one (the `needs` edges).
     pub needs: Vec<String>,
+    /// `jobs N`: run under batonpass's `baton -n N`, so the task takes its
+    /// share of the jobserver's tokens (`$BATON_JOBS` holds the count granted).
+    pub jobs: Option<u32>,
 }
 
 /// A task placed in the validated graph: its spec plus the indices (into
