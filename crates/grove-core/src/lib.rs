@@ -428,11 +428,16 @@ impl Grove {
             }
         }
         if let Err(why) = subvol::delete(&wt.path) {
-            if self.config.worktrees_subvolume {
-                warn(&format!(
-                    "{why}; removing file by file (mount with user_subvol_rm_allowed \
-                     to delete subvolumes without root)"
-                ));
+            if !self.config.worktrees_subvolume {
+                return;
+            }
+            if why.contains("not permitted") {
+                warn(
+                    "deleting a subvolume without root needs the user_subvol_rm_allowed \
+                     mount option; removing file by file",
+                );
+            } else {
+                warn(&format!("{why}; removing file by file"));
             }
         }
     }
