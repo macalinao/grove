@@ -18,6 +18,7 @@ pub use grove_git::{ConfigScope, GitError, Repo, Worktree};
 
 pub mod copy;
 pub mod refs;
+pub mod subvol;
 
 pub use copy::{
     CopySpec, ReflinkSupport, copy_dirs, copy_files, copy_into, read_worktreeinclude,
@@ -283,8 +284,15 @@ impl Grove {
         }
 
         let (create_branch, base) = self.plan_branch(&branch, remote, opts)?;
-        self.repo
-            .add_worktree(&folder, &branch, create_branch, base.as_deref(), opts.force)?;
+        let subvolume = self.config.worktrees_subvolume && make_subvolume(&folder);
+        let added =
+            self.repo
+                .add_worktree(&folder, &branch, create_branch, base.as_deref(), opts.force);
+        if added.is_err() && subvolume {
+            // Still empty: rmdir deletes an empty subvolume without root.
+            let _ = std::fs::remove_dir(&folder);
+        }
+        added?;
         // Upstream tracking follows from the base ref: git auto-tracks when the
         // start point is a remote-tracking branch (matching gtr, which likewise
         // doesn't suppress it).
@@ -390,6 +398,8 @@ impl Grove {
         let wt = self
             .find(name)?
             .ok_or_else(|| CoreError::NotFound(name.to_string()))?;
+        self.delete_subvolume(&wt, opts.force);
+        // After a subvolume delete the dir is gone and this only unregisters it.
         self.repo.remove_worktree(&wt.path, opts.force)?;
         if opts.delete_branch {
             if let Some(branch) = wt.branch {
@@ -397,6 +407,34 @@ impl Grove {
             }
         }
         Ok(())
+    }
+
+    /// Fast path for removing a worktree that is a btrfs subvolume: one
+    /// `btrfs subvolume delete` instead of git unlinking every file. Skipped
+    /// (leaving it to `git worktree remove`, with git's checks and messages)
+    /// for locked worktrees, and for dirty ones unless `force`. Best-effort: on
+    /// failure git deletes it file by file as usual.
+    fn delete_subvolume(&self, wt: &Worktree, force: bool) {
+        if wt.locked || !subvol::is_subvolume(&wt.path) {
+            return;
+        }
+        if !force {
+            // `git worktree remove` refuses modified or untracked files.
+            let clean = Repo::discover_from(&wt.path)
+                .and_then(|r| r.git(&["status", "--porcelain", "--ignore-submodules=none"]))
+                .is_ok_and(|s| s.trim().is_empty());
+            if !clean {
+                return;
+            }
+        }
+        if let Err(why) = subvol::delete(&wt.path) {
+            if self.config.worktrees_subvolume {
+                warn(&format!(
+                    "{why}; removing file by file (mount with user_subvol_rm_allowed \
+                     to delete subvolumes without root)"
+                ));
+            }
+        }
     }
 
     /// Rename a worktree and its branch. Returns the new path.
@@ -468,6 +506,25 @@ fn truncate_slug(slug: &str) -> &str {
     }
     let cut = slug[..SLUG_MAX].rfind('-').unwrap_or(SLUG_MAX);
     slug[..cut].trim_end_matches('-')
+}
+
+/// Make `folder` a btrfs subvolume for `grove.worktrees.subvolume`, warning
+/// and leaving it to git (a plain directory) when it can't be.
+fn make_subvolume(folder: &Path) -> bool {
+    match subvol::create(folder) {
+        Ok(()) => true,
+        Err(why) => {
+            warn(&format!(
+                "worktrees.subvolume: {why}; using a plain directory"
+            ));
+            false
+        }
+    }
+}
+
+/// A non-fatal notice on stderr.
+fn warn(msg: &str) {
+    eprintln!("! {msg}");
 }
 
 #[cfg(test)]

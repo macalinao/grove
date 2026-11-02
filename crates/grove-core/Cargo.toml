@@ -19,5 +19,8 @@ grove-git.workspace = true
 grove-config.workspace = true
 grove-forge.workspace = true
 
+[target.'cfg(target_os = "linux")'.dependencies]
+rustix.workspace = true
+
 [dev-dependencies]
 tempfile.workspace = true

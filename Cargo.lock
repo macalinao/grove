@@ -618,6 +618,7 @@ dependencies = [
  "grove-git",
  "ignore",
  "reflink-copy",
+ "rustix",
  "tempfile",
  "thiserror",
 ]

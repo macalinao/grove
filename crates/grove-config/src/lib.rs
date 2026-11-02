@@ -49,6 +49,9 @@ pub struct Config {
     /// Folder-name prefix for new worktrees (NOT a branch prefix — see the
     /// gtr gotcha in the design notes).
     pub worktrees_prefix: String,
+    /// Make each new worktree its own btrfs subvolume (`grove.worktrees.subvolume`).
+    /// Off by default; falls back to a plain directory off btrfs.
+    pub worktrees_subvolume: bool,
     /// Default editor adapter name.
     pub editor_default: Option<String>,
     /// Default AI tool adapter name.
@@ -161,6 +164,7 @@ impl Default for Config {
         Config {
             worktrees_dir: None,
             worktrees_prefix: String::new(),
+            worktrees_subvolume: false,
             editor_default: None,
             ai_default: None,
             color: ColorChoice::Auto,
@@ -233,6 +237,9 @@ impl Config {
         }
         if let Some(v) = repo.config_get("grove.worktrees.prefix")? {
             self.worktrees_prefix = v;
+        }
+        if let Some(v) = repo.config_get("grove.worktrees.subvolume")? {
+            self.worktrees_subvolume = parse_bool(&v);
         }
         if let Some(v) = repo.config_get("grove.editor.default")? {
             self.editor_default = Some(v);
@@ -353,6 +360,9 @@ impl Config {
         if !self.worktrees_prefix.is_empty() {
             push_scalar(&mut worktrees, "prefix", Some(&self.worktrees_prefix));
         }
+        if self.worktrees_subvolume {
+            worktrees.push("  subvolume #true".to_string());
+        }
         push_block(&mut out, "worktrees", &worktrees);
 
         let mut editor = Vec::new();
@@ -418,6 +428,14 @@ fn kdl_quote(s: &str) -> String {
     }
     out.push('"');
     out
+}
+
+/// A git-config boolean: `true`/`yes`/`on`/`1` (any case) are true.
+fn parse_bool(v: &str) -> bool {
+    matches!(
+        v.trim().to_ascii_lowercase().as_str(),
+        "true" | "yes" | "on" | "1"
+    )
 }
 
 /// Push a single-valued `name "value"` child line when `value` is set.
@@ -493,6 +511,7 @@ mod kdl_roundtrip_tests {
         let original = Config {
             worktrees_dir: Some("../wt".into()),
             worktrees_prefix: "wt-".into(),
+            worktrees_subvolume: true,
             editor_default: Some("cursor".into()),
             ai_default: Some("claude".into()),
             color: ColorChoice::Never,

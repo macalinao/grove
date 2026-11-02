@@ -19,6 +19,9 @@ pub fn apply(cfg: &mut Config, src: &str) -> core::result::Result<(), String> {
         if let Some(v) = child_string(children, "prefix") {
             cfg.worktrees_prefix = v;
         }
+        if let Some(v) = child_bool(children, "subvolume") {
+            cfg.worktrees_subvolume = v;
+        }
     }
     if let Some(children) = child_doc(&doc, "editor") {
         if let Some(v) = child_string(children, "default") {
@@ -159,6 +162,15 @@ fn child_string(parent: &KdlDocument, name: &str) -> Option<String> {
         .map(str::to_string)
 }
 
+/// The first positional boolean argument of `parent`'s node named `name`.
+fn child_bool(parent: &KdlDocument, name: &str) -> Option<bool> {
+    let node = parent.get(name)?;
+    node.entries()
+        .iter()
+        .find(|e| e.name().is_none())
+        .and_then(|e| e.value().as_bool())
+}
+
 #[cfg(test)]
 #[allow(clippy::unwrap_used)]
 mod tests {
@@ -167,7 +179,7 @@ mod tests {
     #[test]
     fn reads_worktrees_and_editor() {
         let src = r#"
-            worktrees { dir "../wt"; prefix "wt-" }
+            worktrees { dir "../wt"; prefix "wt-"; subvolume #true }
             editor { default "cursor" }
             ai { default "claude" }
             ui { color "never" }
@@ -176,6 +188,7 @@ mod tests {
         apply(&mut cfg, src).unwrap();
         assert_eq!(cfg.worktrees_dir.as_deref(), Some("../wt"));
         assert_eq!(cfg.worktrees_prefix, "wt-");
+        assert!(cfg.worktrees_subvolume);
         assert_eq!(cfg.editor_default.as_deref(), Some("cursor"));
         assert_eq!(cfg.ai_default.as_deref(), Some("claude"));
         assert_eq!(cfg.color, ColorChoice::Never);
