@@ -5,21 +5,27 @@ members = ["crates/*"]
 [workspace.package]
 version = "0.1.0"
 edition = "2024"
-license = "MIT OR Apache-2.0"
+license = "Apache-2.0"
 repository = "https://github.com/macalinao/grove"
+homepage = "https://github.com/macalinao/grove"
+readme = "README.md"
+keywords = ["git", "worktree", "gtr", "cli", "btrfs"]
+categories = ["command-line-utilities", "development-tools"]
 authors = ["Ian Macalinao <github@igm.pub>"]
 rust-version = "1.85"
 
 [workspace.dependencies]
-# Internal crates
-grove-core = { path = "crates/grove-core", version = "0.1.0" }
-grove-config = { path = "crates/grove-config", version = "0.1.0" }
-grove-tasks = { path = "crates/grove-tasks", version = "0.1.0" }
-grove-git = { path = "crates/grove-git", version = "0.1.0" }
-grove-adapters = { path = "crates/grove-adapters", version = "0.1.0" }
-grove-forge = { path = "crates/grove-forge", version = "0.1.0" }
-grove-shell = { path = "crates/grove-shell", version = "0.1.0" }
-grove-db = { path = "crates/grove-db", version = "0.1.0" }
+# Internal crates. Published as `grove-wt-*` (`grove`, `grove-cli` and
+# `grove-core` are taken on crates.io); the dependency keys keep the code's
+# `grove_*` crate names.
+grove-core = { package = "grove-wt-core", path = "crates/grove-core", version = "0.1.0" }
+grove-config = { package = "grove-wt-config", path = "crates/grove-config", version = "0.1.0" }
+grove-tasks = { package = "grove-wt-tasks", path = "crates/grove-tasks", version = "0.1.0" }
+grove-git = { package = "grove-wt-git", path = "crates/grove-git", version = "0.1.0" }
+grove-adapters = { package = "grove-wt-adapters", path = "crates/grove-adapters", version = "0.1.0" }
+grove-forge = { package = "grove-wt-forge", path = "crates/grove-forge", version = "0.1.0" }
+grove-shell = { package = "grove-wt-shell", path = "crates/grove-shell", version = "0.1.0" }
+grove-db = { package = "grove-wt-db", path = "crates/grove-db", version = "0.1.0" }
 
 # External
 anyhow = "1"

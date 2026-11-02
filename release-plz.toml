@@ -1,0 +1,35 @@
+# release-plz: release PRs with conventional-commit changelogs, then
+# `cargo publish` + a GitHub release when they merge.
+# See https://release-plz.dev/docs/config.
+
+[workspace]
+# One changelog, tag and GitHub release, all on the CLI crate (below); the
+# internal crates are published (the CLI depends on them) but not tagged.
+changelog_update = false
+git_release_enable = false
+git_tag_enable = false
+pr_labels = ["release"]
+
+[changelog]
+protect_breaking_commits = true
+
+[[package]]
+name = "grove-wt"
+changelog_update = true
+changelog_include = [
+  "grove-wt-adapters",
+  "grove-wt-config",
+  "grove-wt-core",
+  "grove-wt-forge",
+  "grove-wt-git",
+  "grove-wt-shell",
+  "grove-wt-tasks",
+]
+git_tag_enable = true
+git_tag_name = "v{{ version }}"
+git_release_enable = true
+git_release_name = "v{{ version }}"
+
+[[package]]
+name = "grove-wt-db"
+release = false

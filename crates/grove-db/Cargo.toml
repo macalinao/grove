@@ -1,5 +1,5 @@
 [package]
-name = "grove-db"
+name = "grove-wt-db"
 description = "Per-branch database lifecycle for Grove (supersedes dbbranch) (M4)"
 version.workspace = true
 edition.workspace = true
@@ -7,9 +7,18 @@ license.workspace = true
 repository.workspace = true
 authors.workspace = true
 rust-version.workspace = true
+homepage.workspace = true
+readme.workspace = true
+keywords.workspace = true
+categories.workspace = true
+# Scaffold (M4), not used by the CLI yet.
+publish = false
 
 [lints]
 workspace = true
+
+[lib]
+name = "grove_db"
 
 [dependencies]
 thiserror.workspace = true

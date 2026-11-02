@@ -572,23 +572,16 @@ dependencies = [
 ]
 
 [[package]]
-name = "grove-adapters"
-version = "0.1.0"
-dependencies = [
- "thiserror",
-]
-
-[[package]]
-name = "grove-cli"
+name = "grove-wt"
 version = "0.1.0"
 dependencies = [
  "anyhow",
  "bpaf",
  "console",
- "grove-adapters",
- "grove-core",
- "grove-shell",
- "grove-tasks",
+ "grove-wt-adapters",
+ "grove-wt-core",
+ "grove-wt-shell",
+ "grove-wt-tasks",
  "indicatif",
  "kdl",
  "open",
@@ -599,10 +592,17 @@ dependencies = [
 ]
 
 [[package]]
-name = "grove-config"
+name = "grove-wt-adapters"
 version = "0.1.0"
 dependencies = [
- "grove-git",
+ "thiserror",
+]
+
+[[package]]
+name = "grove-wt-config"
+version = "0.1.0"
+dependencies = [
+ "grove-wt-git",
  "kdl",
  "sha2 0.11.1",
  "tempfile",
@@ -610,12 +610,12 @@ dependencies = [
 ]
 
 [[package]]
-name = "grove-core"
+name = "grove-wt-core"
 version = "0.1.0"
 dependencies = [
- "grove-config",
- "grove-forge",
- "grove-git",
+ "grove-wt-config",
+ "grove-wt-forge",
+ "grove-wt-git",
  "ignore",
  "reflink-copy",
  "rustix",
@@ -624,14 +624,14 @@ dependencies = [
 ]
 
 [[package]]
-name = "grove-db"
+name = "grove-wt-db"
 version = "0.1.0"
 dependencies = [
  "thiserror",
 ]
 
 [[package]]
-name = "grove-forge"
+name = "grove-wt-forge"
 version = "0.1.0"
 dependencies = [
  "futures",
@@ -647,21 +647,21 @@ dependencies = [
 ]
 
 [[package]]
-name = "grove-git"
+name = "grove-wt-git"
 version = "0.1.0"
 dependencies = [
  "thiserror",
 ]
 
 [[package]]
-name = "grove-shell"
+name = "grove-wt-shell"
 version = "0.1.0"
 dependencies = [
  "thiserror",
 ]
 
 [[package]]
-name = "grove-tasks"
+name = "grove-wt-tasks"
 version = "0.1.0"
 dependencies = [
  "kdl",

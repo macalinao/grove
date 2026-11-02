@@ -1,5 +1,5 @@
 [package]
-name = "grove-forge"
+name = "grove-wt-forge"
 description = "Forge integration (GitHub, Gitea, GitLab) for Grove (M2)"
 version.workspace = true
 edition.workspace = true
@@ -7,9 +7,16 @@ license.workspace = true
 repository.workspace = true
 authors.workspace = true
 rust-version.workspace = true
+homepage.workspace = true
+readme.workspace = true
+keywords.workspace = true
+categories.workspace = true
 
 [lints]
 workspace = true
+
+[lib]
+name = "grove_forge"
 
 [dependencies]
 futures.workspace = true
