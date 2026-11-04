@@ -616,9 +616,9 @@ dependencies = [
  "grove-wt-config",
  "grove-wt-forge",
  "grove-wt-git",
+ "grove-wt-subvol",
  "ignore",
  "reflink-copy",
- "rustix",
  "tempfile",
  "thiserror",
 ]
@@ -658,6 +658,14 @@ name = "grove-wt-shell"
 version = "0.1.0"
 dependencies = [
  "thiserror",
+]
+
+[[package]]
+name = "grove-wt-subvol"
+version = "0.1.0"
+dependencies = [
+ "rustix",
+ "tempfile",
 ]
 
 [[package]]
