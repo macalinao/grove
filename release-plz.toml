@@ -23,6 +23,7 @@ changelog_include = [
   "grove-wt-forge",
   "grove-wt-git",
   "grove-wt-shell",
+  "grove-wt-subvol",
   "grove-wt-tasks",
 ]
 git_tag_enable = true
