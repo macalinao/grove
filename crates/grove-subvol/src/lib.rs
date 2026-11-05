@@ -1,4 +1,4 @@
-//! Btrfs subvolume worktrees (`grove.worktrees.subvolume`) and snapshots.
+//! Btrfs subvolume worktrees (`grove.worktrees.subvolume`).
 //!
 //! Its own crate (std and rustix only) so tools that manage worktrees
 //! their own way can use it without grove's forge and config stack.
@@ -62,29 +62,6 @@ pub fn create(path: &Path) -> Result<(), String> {
         return Err(format!("{} is not on btrfs", parent.display()));
     }
     btrfs(&["subvolume", "create"], path)
-}
-
-/// Snapshot the subvolume `src` to `dst` (which must not exist; its parent
-/// must, on the same btrfs filesystem). The snapshot is writable and
-/// copy-on-write: instant, and it shares every extent with `src` until
-/// either side writes, so a warm checkout's build output (`target/`,
-/// `node_modules/`) comes along at near-zero extra disk. Unprivileged
-/// snapshots need the caller to own `src`.
-///
-/// # Errors
-/// A human-readable reason: `src` isn't a subvolume, or `btrfs subvolume
-/// snapshot` failed.
-pub fn snapshot(src: &Path, dst: &Path) -> Result<(), String> {
-    if !is_subvolume(src) {
-        return Err(format!("{} is not a btrfs subvolume", src.display()));
-    }
-    run(&snapshot_argv(src, dst))
-}
-
-/// The argv of [`snapshot`], for callers that run commands their own way
-/// (another user, a login shell, a timeout).
-pub fn snapshot_argv(src: &Path, dst: &Path) -> Vec<String> {
-    argv(&["subvolume", "snapshot"], &[src, dst])
 }
 
 /// The argv of [`delete`], for callers that run commands their own way.
@@ -151,32 +128,9 @@ mod tests {
     #[test]
     fn argvs() {
         assert_eq!(
-            snapshot_argv(Path::new("/a/seed"), Path::new("/a/b")),
-            ["btrfs", "subvolume", "snapshot", "--", "/a/seed", "/a/b"]
-        );
-        assert_eq!(
             delete_argv(Path::new("/a/b")),
             ["btrfs", "subvolume", "delete", "--", "/a/b"]
         );
-    }
-
-    #[test]
-    fn snapshot_shares_the_seeds_files_or_refuses() {
-        let dir = tempfile::tempdir().unwrap();
-        let seed = dir.path().join("seed");
-        if create(&seed).is_err() {
-            assert!(snapshot(&seed, &dir.path().join("x")).is_err());
-            return;
-        }
-        std::fs::write(seed.join("f"), "warm").unwrap();
-        let snap = dir.path().join("snap");
-        snapshot(&seed, &snap).unwrap();
-        assert!(is_subvolume(&snap));
-        assert_eq!(std::fs::read_to_string(snap.join("f")).unwrap(), "warm");
-        for p in [&snap, &seed] {
-            std::fs::remove_file(p.join("f")).unwrap();
-            std::fs::remove_dir(p).unwrap();
-        }
     }
 
     #[test]
