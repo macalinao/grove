@@ -73,6 +73,8 @@ pub struct PrInfo {
     pub head_owner: String,
     /// Name of the head repository.
     pub head_repo: String,
+    /// The head commit's SHA (the PR's last pushed commit).
+    pub head_sha: String,
     /// PR title.
     pub title: String,
 }

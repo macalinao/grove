@@ -199,6 +199,8 @@ struct GhHead {
     #[serde(rename = "ref", default)]
     ref_: String,
     #[serde(default)]
+    sha: String,
+    #[serde(default)]
     repo: Option<GhRepo>,
 }
 
@@ -249,6 +251,7 @@ fn pr_info(pull: GhPull) -> PrInfo {
         head: pull.head.ref_,
         head_owner,
         head_repo,
+        head_sha: pull.head.sha,
         title: pull.title,
     }
 }
