@@ -1,5 +1,7 @@
 # Grove
 
+[![CI](https://github.com/macalinao/grove/actions/workflows/ci.yml/badge.svg)](https://github.com/macalinao/grove/actions/workflows/ci.yml) [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
+
 A Rust git worktree runner — a faster, typed, native alternative to
 [`gtr`](https://github.com/coderabbitai/git-worktree-runner), with first-class
 **GitHub and Gitea** integration and (later) per-branch databases.
@@ -18,12 +20,20 @@ URLs), `list` (`--json` with PR state), `go`, `cd` (with an fzf picker), `run`,
 (tokens from `gh`/`tea`, no login step). Lifecycle hooks
 (`postCreate`/`preRemove`/`postRemove`/`postCd`), a copy-on-write copy engine
 (files, directories, `.worktreeinclude`) and opt-in btrfs subvolume worktrees
-are wired in. Per-branch databases (`grove-db`) remain a later milestone. See
-the design spec in the Obsidian vault (`igm/grove/…`).
+are wired in. Per-branch databases (`grove-db`) remain a later milestone.
+
+## Install
 
 ```sh
-cargo install grove-wt   # once published; installs `grove` and `git-grove`
+nix profile install github:macalinao/grove   # or: nix run github:macalinao/grove -- ...
+cargo install grove-wt                       # once published
 ```
+
+Both install `grove` and `git-grove`. In a NixOS or home-manager flake, add the
+input `grove.url = "github:macalinao/grove";` and install
+`inputs.grove.packages.${pkgs.stdenv.hostPlatform.system}.grove`.
+
+## Usage
 
 The CLI uses [`bpaf`](https://docs.rs/bpaf); shell completion is bpaf's
 env-driven autocomplete (e.g. `COMPLETE=bash grove`), not a subcommand.
