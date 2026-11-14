@@ -8,7 +8,7 @@ A Rust git worktree runner — a faster, typed, native alternative to
 
 ## Status
 
-**M1 and M2 (forge) complete.** Working today: `new` (with `--from`/
+**M1 and M2 (forge) complete.** Working today: `new` (with `--from`/`--detach`/
 `--from-current`/`--remote`/`--track`/`--name`/`--no-fetch`/`--no-copy`/
 `--no-hooks`/`-e`/`-a`, and PR/branch/issue refs: `#42`, `--pr`, `--issue`,
 URLs), `list` (`--json` with PR state), `go`, `cd` (with an fzf picker), `run`,
@@ -44,7 +44,13 @@ tasks {
 ```
 
 `grove tasks` runs the graph in the current worktree (`--list`, `--concurrency
-N`, `--keep-going`); `grove new --no-tasks` skips it.
+N`, `--keep-going`); `grove new --no-tasks` skips it. Tasks run only once
+`grove trust` has approved that `grove.kdl`'s contents (run it in the worktree
+that has the file; the approval holds in every worktree of the repo).
+
+`grove new --detach NAME [--from REF]` makes a worktree with a detached HEAD at
+REF (default: the remote's default branch), creating no branch; NAME only
+names the folder.
 
 A task with `jobs N` runs under [batonpass](https://github.com/macalinao/batonpass)
 (`baton -n N`), taking its share of the machine's jobserver tokens; the count

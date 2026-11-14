@@ -77,3 +77,21 @@ fn no_kdl_means_nothing_to_trust() {
     let out = ok(&r.grove(&["tasks"]));
     assert!(out.to_lowercase().contains("no tasks") || out.is_empty());
 }
+
+#[test]
+fn trust_in_a_worktree_approves_its_own_kdl() {
+    let r = TestRepo::new();
+    // The main worktree has no grove.kdl; the linked one does.
+    ok(&r.grove(&["new", "wt", "--no-fetch", "--from", "main", "--no-tasks"]));
+    let wt = r.wt("wt");
+    std::fs::write(wt.join("grove.kdl"), KDL).unwrap();
+    assert!(
+        failed(&r.grove_in(&wt, &["tasks"]))
+            .to_lowercase()
+            .contains("trust")
+    );
+
+    ok(&r.grove_in(&wt, &["trust"]));
+    ok(&r.grove_in(&wt, &["tasks"]));
+    assert_eq!(std::fs::read_to_string(wt.join("ORDER")).unwrap(), "a\nb\n");
+}

@@ -149,3 +149,41 @@ fn color_config_never_suppresses_ansi() {
     let out = r.grove(&["config", "set", "grove.foo", "baz"]);
     assert!(!stderr(&out).contains('\u{1b}'), "no ANSI with color=never");
 }
+
+#[test]
+fn detach_checks_out_the_start_point_without_a_branch() {
+    let r = TestRepo::new();
+    r.add_origin();
+    ok(&r.grove(&["new", "scratch", "--no-fetch", "--detach", "--from", "main"]));
+
+    let wt = r.wt("scratch");
+    let wt = wt.to_str().unwrap();
+    let stdout = |args: &[&str]| {
+        String::from_utf8_lossy(&r.git(args).stdout)
+            .trim()
+            .to_owned()
+    };
+    assert_eq!(
+        stdout(&["-C", wt, "rev-parse", "HEAD"]),
+        stdout(&["rev-parse", "main"])
+    );
+    // Detached: no symbolic HEAD, and no `scratch` branch was created.
+    assert!(
+        !r.git(&["-C", wt, "symbolic-ref", "-q", "HEAD"])
+            .status
+            .success()
+    );
+    assert!(
+        !r.git(&["rev-parse", "--verify", "-q", "refs/heads/scratch"])
+            .status
+            .success()
+    );
+}
+
+#[test]
+fn detach_rejects_pr_and_issue_refs() {
+    let r = TestRepo::new();
+    let out = r.grove(&["new", "--detach", "--pr", "3", "--no-fetch"]);
+    assert!(!out.status.success());
+    assert!(stderr(&out).contains("--detach"), "{}", stderr(&out));
+}

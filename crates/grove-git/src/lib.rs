@@ -482,6 +482,16 @@ impl Repo {
         Ok(())
     }
 
+    /// Add a worktree at `path` with a detached HEAD at `commit` (no branch).
+    ///
+    /// # Errors
+    /// Returns [`GitError`] if `git worktree add --detach` fails.
+    pub fn add_worktree_detached(&self, path: &Path, commit: &str) -> Result<()> {
+        let path = path.to_string_lossy().into_owned();
+        self.git(&["worktree", "add", "--detach", &path, commit])?;
+        Ok(())
+    }
+
     /// Remove the worktree at `path`.
     ///
     /// # Errors
