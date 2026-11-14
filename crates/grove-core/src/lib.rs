@@ -93,6 +93,9 @@ pub struct CreateOpts {
     pub remote: Option<String>,
     /// Upstream tracking mode for a newly created branch.
     pub track: TrackMode,
+    /// Check out the start point with a detached HEAD instead of a branch
+    /// (`--detach`); the name then only names the folder.
+    pub detach: bool,
 }
 
 impl Default for CreateOpts {
@@ -107,6 +110,7 @@ impl Default for CreateOpts {
             fetch: true,
             remote: None,
             track: TrackMode::Auto,
+            detach: false,
         }
     }
 }
@@ -283,11 +287,18 @@ impl Grove {
             let _ = self.repo.fetch(remote);
         }
 
-        let (create_branch, base) = self.plan_branch(&branch, remote, opts)?;
-        let subvolume = self.config.worktrees_subvolume && make_subvolume(&folder);
-        let added =
+        let subvolume;
+        let added = if opts.detach {
+            let base = self.resolve_from_ref(remote, opts)?;
+            subvolume = self.config.worktrees_subvolume && make_subvolume(&folder);
             self.repo
-                .add_worktree(&folder, &branch, create_branch, base.as_deref(), opts.force);
+                .add_worktree_detached(&folder, base.as_deref().unwrap_or("HEAD"))
+        } else {
+            let (create_branch, base) = self.plan_branch(&branch, remote, opts)?;
+            subvolume = self.config.worktrees_subvolume && make_subvolume(&folder);
+            self.repo
+                .add_worktree(&folder, &branch, create_branch, base.as_deref(), opts.force)
+        };
         if added.is_err() && subvolume {
             // Still empty: rmdir deletes an empty subvolume without root.
             let _ = std::fs::remove_dir(&folder);

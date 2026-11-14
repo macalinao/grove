@@ -35,6 +35,10 @@ pub struct New {
     /// Folder-name suffix (appended to the sanitized branch name)
     #[bpaf(long, argument("SUFFIX"))]
     name: Option<String>,
+    /// Check out the start point (`--from`, else the default branch) with a
+    /// detached HEAD; REF then only names the folder
+    #[bpaf(long, switch)]
+    detach: bool,
     /// Allow a branch already checked out in another worktree
     #[bpaf(long, switch)]
     force: bool,
@@ -119,8 +123,11 @@ pub fn execute(args: New) -> Result<()> {
 
 /// Build the [`ForgeRef`] from `--pr` / `--issue` (aliases) or the positional
 /// argument. Exactly one source must be present.
+/// With `--detach` the positional is only a folder name, never a forge ref.
 fn build_ref(args: &New) -> Result<ForgeRef> {
     match (args.pr, args.issue, args.reference.as_deref()) {
+        (None, None, Some(r)) if args.detach => Ok(ForgeRef::Branch(r.to_owned())),
+        _ if args.detach => bail!("--detach takes a worktree name, not --pr or --issue"),
         (Some(n), None, None) => Ok(ForgeRef::Pr(n)),
         (None, Some(n), None) => Ok(ForgeRef::Issue(n)),
         (None, None, Some(r)) => Ok(ForgeRef::parse(r)),
@@ -144,6 +151,7 @@ fn create_opts(args: &New) -> CreateOpts {
             .track
             .as_deref()
             .map_or(TrackMode::Auto, TrackMode::parse),
+        detach: args.detach,
     }
 }
 
