@@ -122,6 +122,12 @@ treefmt + git-hooks. CI runs `nix flake check` and `nix build`.
 Releases go through [release-plz](https://release-plz.dev): pushes to `master`
 open a release PR (version bump + `CHANGELOG.md` from conventional commits);
 merging it publishes to crates.io and tags `vX.Y.Z`.
+The release PR job needs the repo's Settings → Actions → General → "Allow
+GitHub Actions to create and approve pull requests" on; without it the job
+fails with 403 "GitHub Actions is not permitted to create or approve pull
+requests". A PR opened with `GITHUB_TOKEN` doesn't trigger CI, so its checks
+wait for approval; set a `RELEASE_PLZ_TOKEN` secret (a fine-grained token
+with Contents and Pull requests read/write on this repo) to have CI run on it.
 `rust-toolchain.toml` pins the same rustc the flake ships, for rustup users and
 editors outside `nix develop`.
 
