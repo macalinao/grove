@@ -59,7 +59,10 @@
         in
         {
           packages.default = self'.packages.grove;
-          packages.grove = cargoNix.workspaceMembers.grove-wt.build;
+          # mainProgram: the crate is grove-wt, the binary `grove` (`nix run`).
+          packages.grove = pkgs.lib.addMetaAttrs {
+            mainProgram = "grove";
+          } cargoNix.workspaceMembers.grove-wt.build;
 
           # The upstream gtr CLI, pinned, for the grove-vs-gtr differential
           # tests. Exposed as a package and put on the dev shell PATH so
