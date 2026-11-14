@@ -86,7 +86,21 @@ fn setup() -> TestRepo {
     // discovery so the test never touches the developer's real `gh` creds.
     r.set_config("grove.forge.host", &start_mock_github());
     r.set_config("grove.forge.token", "test-token");
+    // `target/` is build output; main's commits are on the remote (so a fresh
+    // worktree has nothing unpushed).
+    std::fs::write(r.root.join(".gitignore"), "target/\n").unwrap();
+    ok(&r.git(&["add", ".gitignore"]));
+    ok(&r.git(&["commit", "-q", "-m", "ignore target"]));
+    ok(&r.git(&["update-ref", "refs/remotes/origin/main", "HEAD"]));
     r
+}
+
+/// Commit a file in the worktree of `branch`.
+fn commit_in(r: &TestRepo, branch: &str) {
+    let wt = r.wt(branch);
+    std::fs::write(wt.join("work.txt"), "work").unwrap();
+    ok(&r.git_in(&wt, &["add", "work.txt"]));
+    ok(&r.git_in(&wt, &["commit", "-q", "-m", "work"]));
 }
 
 fn clean(r: &TestRepo, args: &[&str]) -> std::process::Output {
@@ -150,4 +164,85 @@ fn errors_without_a_forge_remote() {
     let r = TestRepo::new();
     let err = failed(&r.grove(&["clean", "--merged"]));
     assert!(err.to_lowercase().contains("forge") || err.to_lowercase().contains("provider"));
+}
+
+#[test]
+fn keeps_unpushed_and_dirty_unless_forced() {
+    let r = setup();
+    ok(&r.grove(&["new", "merged-unpushed", "--no-fetch"]));
+    commit_in(&r, "merged-unpushed");
+    ok(&r.grove(&["new", "closed-dirty", "--no-fetch"]));
+    std::fs::write(r.wt("closed-dirty").join("scratch"), "x").unwrap();
+    let out = clean(&r, &["--merged", "--closed", "--yes"]);
+    ok(&out);
+    let err = common::stderr(&out);
+    assert!(err.contains("1 commit on no remote"), "{err}");
+    assert!(err.contains("1 uncommitted change"), "{err}");
+    assert!(r.wt("merged-unpushed").is_dir());
+    assert!(r.wt("closed-dirty").is_dir());
+    ok(&clean(&r, &["--merged", "--closed", "--yes", "--force"]));
+    assert!(!r.wt("merged-unpushed").exists());
+    assert!(!r.wt("closed-dirty").exists());
+}
+
+#[test]
+fn trims_ignored_dirs_of_kept_worktrees() {
+    let r = setup();
+    ok(&r.grove(&["new", "merged-t", "--no-fetch"]));
+    commit_in(&r, "merged-t");
+    let wt = r.wt("merged-t");
+    std::fs::create_dir_all(wt.join("target/debug")).unwrap();
+    std::fs::write(wt.join("target/debug/bin"), "x").unwrap();
+    // Tracked, so not trimmed even when named.
+    std::fs::create_dir_all(wt.join("src")).unwrap();
+    std::fs::write(wt.join("src/lib.rs"), "").unwrap();
+    ok(&r.git_in(&wt, &["add", "src"]));
+    ok(&r.git_in(&wt, &["commit", "-q", "-m", "src"]));
+    ok(&clean(
+        &r,
+        &["--merged", "--yes", "--trim", "target", "--trim", "src"],
+    ));
+    assert!(wt.join("src/lib.rs").is_file());
+    assert!(!wt.join("target").exists(), "target/ should be trimmed");
+}
+
+#[test]
+fn slow_removes_ignored_files_then_the_worktree() {
+    let r = setup();
+    ok(&r.grove(&["new", "merged-s", "--no-fetch"]));
+    let wt = r.wt("merged-s");
+    std::fs::create_dir_all(wt.join("target/a/b")).unwrap();
+    std::fs::write(wt.join("target/a/b/f"), "x").unwrap();
+    ok(&clean(&r, &["--merged", "--yes", "--slow"]));
+    assert!(!wt.exists());
+}
+
+#[test]
+fn in_use_command_keeps_a_worktree() {
+    let r = setup();
+    ok(&r.grove(&["new", "merged-busy", "--no-fetch"]));
+    ok(&r.grove(&["new", "merged-idle", "--no-fetch"]));
+    let cmd = r#"case "$BRANCH" in *busy) exit 0;; *) exit 1;; esac"#;
+    let out = clean(&r, &["--merged", "--yes", "--in-use", cmd]);
+    ok(&out);
+    assert!(common::stderr(&out).contains("in use"));
+    assert!(r.wt("merged-busy").is_dir());
+    assert!(!r.wt("merged-idle").exists());
+}
+
+#[test]
+fn a_process_inside_keeps_a_worktree() {
+    let r = setup();
+    ok(&r.grove(&["new", "merged-p", "--no-fetch"]));
+    let mut child = std::process::Command::new("sleep")
+        .arg("30")
+        .current_dir(r.wt("merged-p"))
+        .spawn()
+        .unwrap();
+    let out = clean(&r, &["--merged", "--yes"]);
+    child.kill().unwrap();
+    child.wait().unwrap();
+    ok(&out);
+    assert!(common::stderr(&out).contains("in use by pid"));
+    assert!(r.wt("merged-p").is_dir());
 }

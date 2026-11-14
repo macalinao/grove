@@ -99,6 +99,11 @@ impl TestRepo {
             .unwrap()
     }
 
+    /// Run `git <args>` in `dir` (isolated config).
+    pub fn git_in(&self, dir: &Path, args: &[&str]) -> Output {
+        self.base_cmd("git", dir).args(args).output().unwrap()
+    }
+
     /// Run an arbitrary `program <args>` in the repo root (isolated config,
     /// fake-bin dir on PATH). Used to drive the upstream `gtr` binary.
     pub fn tool(&self, program: &str, args: &[&str]) -> Output {

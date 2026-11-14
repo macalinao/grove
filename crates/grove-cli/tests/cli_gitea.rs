@@ -82,6 +82,8 @@ fn setup() -> TestRepo {
     ]);
     r.set_config("grove.forge.host", &start_mock_gitea());
     r.set_config("grove.forge.token", "test-token");
+    // main is on the remote, so a fresh worktree has nothing unpushed.
+    ok(&r.git(&["update-ref", "refs/remotes/origin/main", "HEAD"]));
     r
 }
 
@@ -137,6 +139,7 @@ fn provider_override_on_neutral_host() {
     r.set_config("grove.provider", "gitea");
     r.set_config("grove.forge.host", &start_mock_gitea());
     r.set_config("grove.forge.token", "test-token");
+    ok(&r.git(&["update-ref", "refs/remotes/origin/main", "HEAD"]));
     ok(&r.grove(&["new", "merged-x", "--no-fetch"]));
     ok(&clean(&r, &["--merged", "--yes"]));
     assert!(!r.wt("merged-x").exists());
