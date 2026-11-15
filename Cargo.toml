@@ -25,6 +25,7 @@ grove-git = { package = "grove-wt-git", path = "crates/grove-git", version = "0.
 grove-adapters = { package = "grove-wt-adapters", path = "crates/grove-adapters", version = "0.1.0" }
 grove-forge = { package = "grove-wt-forge", path = "crates/grove-forge", version = "0.1.0" }
 grove-shell = { package = "grove-wt-shell", path = "crates/grove-shell", version = "0.1.0" }
+grove-subvol = { package = "grove-wt-subvol", path = "crates/grove-subvol", version = "0.1.0" }
 grove-db = { package = "grove-wt-db", path = "crates/grove-db", version = "0.1.0" }
 
 # External
