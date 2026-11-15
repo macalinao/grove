@@ -617,6 +617,7 @@ dependencies = [
  "grove-wt-forge",
  "grove-wt-git",
  "ignore",
+ "libc",
  "reflink-copy",
  "rustix",
  "tempfile",

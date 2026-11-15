@@ -215,6 +215,8 @@ struct GtHead {
     #[serde(rename = "ref", default)]
     ref_: String,
     #[serde(default)]
+    sha: String,
+    #[serde(default)]
     repo: Option<GtRepo>,
 }
 
@@ -266,6 +268,7 @@ fn pr_info(pull: GtPull) -> PrInfo {
         head: pull.head.ref_,
         head_owner,
         head_repo,
+        head_sha: pull.head.sha,
         title: pull.title,
     }
 }
