@@ -78,6 +78,19 @@ and `grove clean` delete a clean (or `--force`d) subvolume worktree with
 filesystem mounted with `user_subvol_rm_allowed`; otherwise git removes the
 files one by one and `rmdir` drops the empty subvolume.
 
+### Cleaning up (`grove clean`)
+
+`grove clean --merged --closed` removes the worktrees (and branches) whose
+PR/MR is merged or closed. A worktree stays, and the reason is printed, when it
+has uncommitted changes or commits on no remote (commits the PR's head reaches
+count as pushed; `--force` removes it anyway), when a process's working
+directory is inside it, or when `--in-use CMD` exits 0 for it (it runs in the
+worktree with `WORKTREE_PATH`, `BRANCH` and `REPO_ROOT` set; exit 1 means not
+in use). `--trim target` deletes a git-ignored `target/` from the worktrees it
+keeps for their work. `--slow` deletes at idle IO priority, 2000 entries at a
+time with a pause after each, git-ignored files first, since one big delete
+can stall btrfs for minutes. `-n` shows the plan.
+
 ### Shell integration (`grove cd`)
 
 A binary can't change its parent shell's directory, so `grove cd <name>` is a

@@ -326,6 +326,69 @@ impl Repo {
         self.ref_exists(spec)
     }
 
+    /// `git status --porcelain` lines: uncommitted changes and untracked
+    /// files (ignored files don't count).
+    ///
+    /// # Errors
+    /// Returns [`GitError`] if `git status` fails.
+    pub fn status_porcelain(&self) -> Result<Vec<String>> {
+        let out = self.git(&["status", "--porcelain", "--ignore-submodules=none"])?;
+        Ok(out.lines().map(str::to_owned).collect())
+    }
+
+    /// How many commits of HEAD are on no remote-tracking ref and not
+    /// reachable from any of `also` (e.g. a PR's head commit, which the forge
+    /// keeps after the branch is deleted).
+    ///
+    /// # Errors
+    /// Returns [`GitError`] if `git rev-list` fails.
+    pub fn unpushed(&self, also: &[&str]) -> Result<u64> {
+        let mut args = vec!["rev-list", "--count", "HEAD", "--not", "--remotes"];
+        args.extend_from_slice(also);
+        let out = self.git(&args)?;
+        out.trim().parse().map_err(|_| GitError::Command {
+            cmd: args.join(" "),
+            stderr: format!("unexpected output `{}`", out.trim()),
+        })
+    }
+
+    /// The untracked entries git ignores, relative to the worktree root, with
+    /// a wholly ignored directory as one entry (`target/`).
+    ///
+    /// # Errors
+    /// Returns [`GitError`] if `git ls-files` fails.
+    pub fn ignored_entries(&self) -> Result<Vec<PathBuf>> {
+        let out = self.git(&[
+            "ls-files",
+            "-z",
+            "--others",
+            "--ignored",
+            "--exclude-standard",
+            "--directory",
+        ])?;
+        Ok(out
+            .split('\0')
+            .filter(|p| !p.is_empty())
+            .map(|p| PathBuf::from(p.trim_end_matches('/')))
+            .collect())
+    }
+
+    /// Whether git ignores `path` (relative to the worktree root).
+    ///
+    /// # Errors
+    /// Returns [`GitError`] if `git check-ignore` cannot be spawned.
+    pub fn is_ignored(&self, path: &str) -> Result<bool> {
+        let output = Command::new("git")
+            .current_dir(&self.cwd)
+            .args(["check-ignore", "-q", "--", path])
+            .output()
+            .map_err(|source| GitError::Spawn {
+                cmd: format!("check-ignore -q {path}"),
+                source,
+            })?;
+        Ok(output.status.success())
+    }
+
     /// Does `spec` resolve to an existing ref (quietly)?
     fn ref_exists(&self, spec: &str) -> Result<bool> {
         let output = Command::new("git")

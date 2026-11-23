@@ -19,6 +19,7 @@ pub use grove_git::{ConfigScope, GitError, Repo, Worktree};
 pub mod copy;
 pub mod refs;
 pub mod subvol;
+pub mod sweep;
 
 pub use copy::{
     CopySpec, ReflinkSupport, copy_dirs, copy_files, copy_into, read_worktreeinclude,
