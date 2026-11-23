@@ -573,7 +573,7 @@ dependencies = [
 
 [[package]]
 name = "grove-wt"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "bpaf",
@@ -593,14 +593,14 @@ dependencies = [
 
 [[package]]
 name = "grove-wt-adapters"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "thiserror",
 ]
 
 [[package]]
 name = "grove-wt-config"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "grove-wt-git",
  "kdl",
@@ -611,7 +611,7 @@ dependencies = [
 
 [[package]]
 name = "grove-wt-core"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "grove-wt-config",
  "grove-wt-forge",
@@ -625,14 +625,14 @@ dependencies = [
 
 [[package]]
 name = "grove-wt-db"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "thiserror",
 ]
 
 [[package]]
 name = "grove-wt-forge"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "futures",
  "octocrab",
@@ -648,21 +648,21 @@ dependencies = [
 
 [[package]]
 name = "grove-wt-git"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "thiserror",
 ]
 
 [[package]]
 name = "grove-wt-shell"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "thiserror",
 ]
 
 [[package]]
 name = "grove-wt-tasks"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "kdl",
  "thiserror",
